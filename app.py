@@ -13,10 +13,11 @@ if "books" not in st.session_state:
 
 # Ensure DB is ready
 init_db()
+st.title("📚🛢️ bookz")
 
 # Tabs for Books and Reviews
 tab1, tab2 = st.tabs(["📖 bookz", "⭐ reviewz"])
-st.title("📚🛢️ bookz")
+
 
 
 # --- BOOKS ---
