@@ -22,37 +22,6 @@ st.title("📚🛢️ bookz")
 # --- BOOKS ---
 with tab1:
     st.header("Add a new book")
-
-    # --- Bulk CSV Upload ---
-    st.subheader("Bulk Upload Books via CSV")
-    csv_file = st.file_uploader("Upload a CSV file", type=["csv"])
-    if csv_file:
-        try:
-            df = pd.read_csv(csv_file)
-            st.dataframe(df)  # preview
-
-            if st.button("Import Books"):
-                conn = get_connection()
-                for _, row in df.iterrows():
-                    title = row.get("title")
-                    author = row.get("author")
-                    book_format = row.get("format", "NA") or "NA"
-                    start_date = row.get("start_date")
-                    end_date = row.get("end_date")
-
-                    start_date = pd.to_datetime(start_date).date() if pd.notna(start_date) else None
-                    end_date = pd.to_datetime(end_date).date() if pd.notna(end_date) else None
-
-                    next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM books").fetchone()[0]
-                    conn.execute(
-                        "INSERT INTO books VALUES (?, ?, ?, ?, ?, ?)",
-                        [next_id, title, author, book_format, start_date, end_date]
-                    )
-                conn.close()
-                st.success(f"Imported {len(df)} books successfully!")
-        except Exception as e:
-            st.error(f"Error importing CSV: {e}")
-
     # --- Add Book Form ---
     with st.form("add_book"):
         title = st.text_input("Title")
@@ -84,6 +53,36 @@ with tab1:
             )
             conn.close()
             st.success(f"Book '{title}' added!")
+
+    # --- Bulk CSV Upload ---
+    st.subheader("Bulk Upload Books via CSV")
+    csv_file = st.file_uploader("Upload a CSV file", type=["csv"])
+    if csv_file:
+        try:
+            df = pd.read_csv(csv_file)
+            st.dataframe(df)  # preview
+
+            if st.button("Import Books"):
+                conn = get_connection()
+                for _, row in df.iterrows():
+                    title = row.get("title")
+                    author = row.get("author")
+                    book_format = row.get("format", "NA") or "NA"
+                    start_date = row.get("start_date")
+                    end_date = row.get("end_date")
+
+                    start_date = pd.to_datetime(start_date).date() if pd.notna(start_date) else None
+                    end_date = pd.to_datetime(end_date).date() if pd.notna(end_date) else None
+
+                    next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM books").fetchone()[0]
+                    conn.execute(
+                        "INSERT INTO books VALUES (?, ?, ?, ?, ?, ?)",
+                        [next_id, title, author, book_format, start_date, end_date]
+                    )
+                conn.close()
+                st.success(f"Imported {len(df)} books successfully!")
+        except Exception as e:
+            st.error(f"Error importing CSV: {e}")
 
     # --- All Books Table ---
     st.subheader("All Books")
