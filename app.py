@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from db import get_connection, init_db
 import plotly.express as px
 
 st.set_page_config(page_title="📚🛢️ bookz", layout="wide")
