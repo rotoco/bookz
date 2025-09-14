@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environment
+.venv/
+
+# Databases
+*.db
+*.duckdb
+
+# Streamlit
+.streamlit/
+
+# Editors
+.vscode/
