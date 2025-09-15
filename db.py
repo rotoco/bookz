@@ -24,4 +24,20 @@ def init_db():
             FOREIGN KEY (book_id) REFERENCES books(id)
         )
     """)
+
+    conn.execute("""
+        CREATE TABLE reviews_new (
+            id INTEGER PRIMARY KEY,
+            book_id INTEGER NOT NULL,
+            rating INTEGER,
+            comment TEXT,
+            FOREIGN KEY(book_id) REFERENCES books(id)
+                );
+    """)
+    conn.execute("""
+                 DROP TABLE reviews;
+                 """)
+    conn.execute("""
+                 ALTER TABLE reviews_new RENAME TO reviews;
+                 """)
     conn.close()
