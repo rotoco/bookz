@@ -19,8 +19,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS reviews (
             id INTEGER PRIMARY KEY,
             book_id INTEGER,
-            rating_x DOUBLE, -- New column for the x-axis rating
-            rating_y DOUBLE, -- New column for the y-axis rating
+            rating INTEGER,
             comment TEXT,
             FOREIGN KEY (book_id) REFERENCES books(id)
         )
