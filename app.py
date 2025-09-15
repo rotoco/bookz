@@ -189,58 +189,23 @@ with tab2:
     if books:
         with st.form("add_review"):
             book_choice = st.selectbox("Book", books, format_func=lambda b: f"{b[1]} (id={b[0]})")
-            
-            st.subheader("Click on the grid to rate!")
-            st.markdown("X-axis: **Engagement** | Y-axis: **Quality**")
-
-            # Create the Plotly figure for the rating grid
-            fig = px.scatter(
-                x=[5], # Add a single point to show where the user clicked
-                y=[5],
-                range_x=[0, 10],
-                range_y=[0, 10],
-                labels={"x": "Engagement", "y": "Quality"},
-                title="Interactive Rating Grid"
-            )
-            fig.update_layout(height=400)
-
-            # Use st.plotly_chart to capture the click event
-            event = st.plotly_chart(fig, on_select="rerun", key="rating_chart", selection_mode="points")
-            
-            x_rating, y_rating = None, None
-            
-            # This is the fix: check if the selection and points exist
-            selected_points_data = event.selection
-            if selected_points_data and selected_points_data.get('points'):
-                # Extract the x and y coordinates of the clicked point
-                x_rating = selected_points_data['points'][0]['x']
-                y_rating = selected_points_data['points'][0]['y']
-                
-                st.info(f"Selected Ratings: Engagement = {x_rating:.1f}, Quality = {y_rating:.1f}")
-
+            rating = st.slider("Rating", 1, 5, 3)
             comment = st.text_area("Comment")
-            
             submitted = st.form_submit_button("Add Review")
-            if submitted and x_rating is not None:
+            if submitted:
                 conn = get_connection()
-                next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM reviews").fetchone()[0]
-                conn.execute(
-                    "INSERT INTO reviews VALUES (?, ?, ?, ?, ?)",
-                    [next_id, book_choice[0], x_rating, y_rating, comment]
-                )
+                conn.execute("INSERT INTO reviews VALUES (?, ?, ?, ?)",
+                             [conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM reviews").fetchone()[0],
+                              book_choice[0], rating, comment])
                 conn.close()
                 st.success("Review added!")
 
     st.subheader("All Reviews")
     conn = get_connection()
     df_reviews = conn.execute("""
-        SELECT r.id, b.title, r.rating_x, r.rating_y, r.comment
+        SELECT r.id, b.title, r.rating, r.comment
         FROM reviews r
         JOIN books b ON r.book_id = b.id
     """).fetchdf()
     conn.close()
     st.dataframe(df_reviews, use_container_width=True)
-
-# --- SHOW ALL BOOKS ---
-st.subheader("All Books")
-st.dataframe(st.session_state.books, use_container_width=True)
