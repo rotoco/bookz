@@ -74,6 +74,42 @@ with tab1:
             conn.close()
             st.success(f"Book '{title}' added!")
 
+# --- Bulk Import CSV ---
+st.subheader("📥 Bulk Import Books (CSV)")
+uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
+if uploaded_file is not None:
+    try:
+        df = pd.read_csv(uploaded_file)
+
+        # Normalize column names (lowercase, strip spaces)
+        df.columns = [c.strip().lower() for c in df.columns]
+
+        # Ensure required columns exist
+        required = {"title", "author"}
+        if not required.issubset(set(df.columns)):
+            st.error(f"CSV must include at least: {required}")
+        else:
+            conn = get_connection()
+            for _, row in df.iterrows():
+                next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM books").fetchone()[0]
+                conn.execute(
+                    "INSERT INTO books (id, title, author, format, start_date, end_date, isbn) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        next_id,
+                        row.get("title"),
+                        row.get("author"),
+                        row.get("format", "NA"),
+                        row.get("start_date") if pd.notna(row.get("start_date")) else None,
+                        row.get("end_date") if pd.notna(row.get("end_date")) else None,
+                        row.get("isbn") if "isbn" in df.columns else None,
+                    ]
+                )
+            conn.close()
+            st.success("✅ CSV imported successfully!")
+    except Exception as e:
+        st.error(f"Error importing CSV: {e}")
+        
+    # --- All Books ---
     st.subheader("All Books")
     conn = get_connection()
     df_books = conn.execute("SELECT * FROM books").fetchdf()
