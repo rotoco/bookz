@@ -194,9 +194,10 @@ with tab2:
             submitted = st.form_submit_button("Add Review")
             if submitted:
                 conn = get_connection()
-                conn.execute("INSERT INTO reviews VALUES (?, ?, ?, ?)",
-                             [conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM reviews").fetchone()[0],
-                              book_choice[0], rating, comment])
+                conn.execute("INSERT INTO reviews (id, book_id, rating, comment) VALUES (?, ?, ?, ?)",
+                             [next_id, book_choice[0], rating, comment]),
+                [conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM reviews").fetchone()[0],
+                 book_choice[0], rating, comment])
                 conn.close()
                 st.success("Review added!")
 
