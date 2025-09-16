@@ -108,13 +108,27 @@ if uploaded_file is not None:
             st.success("✅ CSV imported successfully!")
     except Exception as e:
         st.error(f"Error importing CSV: {e}")
-        
-    # --- All Books ---
-    st.subheader("All Books")
-    conn = get_connection()
-    df_books = conn.execute("SELECT * FROM books").fetchdf()
-    conn.close()
-    st.dataframe(df_books, use_container_width=True)
+
+# --- Manage Books (Delete) ---
+st.subheader("🗑️ Manage Books")
+conn = get_connection()
+books = conn.execute("SELECT id, title FROM books").fetchall()
+conn.close()
+
+if books:
+    book_to_delete = st.selectbox("Select book to delete", books, format_func=lambda b: f"{b[1]} (id={b[0]})")
+    if st.button("Delete Book"):
+        conn = get_connection()
+        conn.execute("DELETE FROM books WHERE id = ?", [book_to_delete[0]])
+        conn.close()
+        st.success(f"Deleted book: {book_to_delete[1]}")
+
+# --- All Books ---
+st.subheader("All Books")
+conn = get_connection()
+df_books = conn.execute("SELECT * FROM books").fetchdf()
+conn.close()
+st.dataframe(df_books, use_container_width=True)
 
 # --- REVIEWS ---
 with tab2:
