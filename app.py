@@ -140,12 +140,50 @@ with tab1:
     conn.close()
 
     if not df_books.empty:
+        # Progress column
+        def compute_progress(row):
+            if pd.isna(row["start_date"]):
+                return "Not Started"
+            elif pd.isna(row["end_date"]):
+                return "In Progress"
+            else:
+                return "Completed"
+
+        df_books["progress"] = df_books.apply(compute_progress, axis=1)
+
         st.dataframe(df_books, use_container_width=True)
 
+        # Update form
+        with st.form("update_book"):
+            book_to_update = st.selectbox(
+                "Select book to update",
+                df_books.itertuples(index=False),
+                format_func=lambda b: f"{b.id} - {b.title}"
+            )
+
+            new_format = st.selectbox(
+                "Format",
+                ["NA", "Audiobook", "Hardcover", "Paperback", "pdf"],
+                index=["NA", "Audiobook", "Hardcover", "Paperback", "pdf"].index(book_to_update.format)
+            )
+            new_start = st.date_input("Start Date", value=None if pd.isna(book_to_update.start_date) else book_to_update.start_date)
+            new_end = st.date_input("End Date", value=None if pd.isna(book_to_update.end_date) else book_to_update.end_date)
+
+            update_btn = st.form_submit_button("Update Book")
+            if update_btn:
+                conn = get_connection()
+                conn.execute(
+                    "UPDATE books SET format = ?, start_date = ?, end_date = ? WHERE id = ?",
+                    [new_format, new_start if new_start else None, new_end if new_end else None, book_to_update.id]
+                )
+                conn.close()
+                st.success(f"Book '{book_to_update.title}' updated!")
+
+        # Delete form
         with st.form("delete_book"):
             book_to_delete = st.selectbox(
                 "Select book to delete",
-                df_books[["id", "title"]].itertuples(index=False),
+                df_books.itertuples(index=False),
                 format_func=lambda b: f"{b.id} - {b.title}"
             )
             delete_btn = st.form_submit_button("Delete Book")
