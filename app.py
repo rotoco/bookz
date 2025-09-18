@@ -2,10 +2,9 @@ import streamlit as st
 import duckdb
 import pandas as pd
 import requests
-from datetime import datetime
-from db import get_connection, init_db
 import altair as alt
-from datetime import date
+from datetime import datetime, date
+from db import get_connection, init_db
 
 st.set_page_config(page_title="📚🛢️ bookz", layout="wide")
 
@@ -152,7 +151,6 @@ with tab1:
                 return "Completed"
 
         df_books["progress"] = df_books.apply(compute_progress, axis=1)
-
         st.dataframe(df_books, use_container_width=True)
 
         # Update form
@@ -195,45 +193,45 @@ with tab1:
                 conn.close()
                 st.success(f"Book '{book_to_delete.title}' deleted!")
 
-    # ------------------------------------------------------------------
-    # ⭐ REVIEWS TAB
-    # ------------------------------------------------------------------
-    with tab2:
-        st.header("Add a review")
+# ------------------------------------------------------------------
+# ⭐ REVIEWS TAB
+# ------------------------------------------------------------------
+with tab2:
+    st.header("Add a review")
 
-        # Only select books with an end_date (Completed)
-        conn = get_connection()
-        books = conn.execute("SELECT id, title FROM books WHERE end_date IS NOT NULL").fetchall()
-        conn.close()
+    # Only select books with an end_date (Completed)
+    conn = get_connection()
+    books = conn.execute("SELECT id, title FROM books WHERE end_date IS NOT NULL").fetchall()
+    conn.close()
 
-        if books:
-            with st.form("add_review", clear_on_submit=True):
-                book_choice = st.selectbox("Book", books, format_func=lambda b: f"{b[1]} (id={b[0]})")
-                rating = st.slider("Rating", 1, 5, 3)
-                comment = st.text_area("Comment")
-                submitted = st.form_submit_button("Add Review")
-                if submitted:
-                    conn = get_connection()
-                    next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM reviews").fetchone()[0]
-                    conn.execute(
-                        "INSERT INTO reviews (id, book_id, rating, comment) VALUES (?, ?, ?, ?)",
-                        [next_id, book_choice[0], rating, comment]
-                    )
-                    conn.close()
-                    st.success("Review added!")
-        else:
-            st.info("No completed books available to review yet.")
+    if books:
+        with st.form("add_review", clear_on_submit=True):
+            book_choice = st.selectbox("Book", books, format_func=lambda b: f"{b[1]} (id={b[0]})")
+            rating = st.slider("Rating", 1, 5, 3)
+            comment = st.text_area("Comment")
+            submitted = st.form_submit_button("Add Review")
+            if submitted:
+                conn = get_connection()
+                next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM reviews").fetchone()[0]
+                conn.execute(
+                    "INSERT INTO reviews (id, book_id, rating, comment) VALUES (?, ?, ?, ?)",
+                    [next_id, book_choice[0], rating, comment]
+                )
+                conn.close()
+                st.success("Review added!")
+    else:
+        st.info("No completed books available to review yet.")
 
-        # All Reviews
-        st.subheader("All Reviews")
-        conn = get_connection()
-        df_reviews = conn.execute("""
-            SELECT r.id, b.title, r.rating, r.comment
-            FROM reviews r
-            JOIN books b ON r.book_id = b.id
-        """).fetchdf()
-        conn.close()
-        st.dataframe(df_reviews, use_container_width=True)
+    # All Reviews
+    st.subheader("All Reviews")
+    conn = get_connection()
+    df_reviews = conn.execute("""
+        SELECT r.id, b.title, r.rating, r.comment
+        FROM reviews r
+        JOIN books b ON r.book_id = b.id
+    """).fetchdf()
+    conn.close()
+    st.dataframe(df_reviews, use_container_width=True)
 
     # --- Books Read by Year Chart ---
     st.subheader("📊 Books Read by Year")
@@ -246,14 +244,13 @@ with tab1:
         df_books["end_date"] = pd.to_datetime(df_books["end_date"], errors="coerce")
         df_books = df_books.dropna(subset=["end_date"])
 
-        # Year selector
         years = sorted(df_books["end_date"].dt.year.unique(), reverse=True)
         selected_year = st.selectbox("Select year", years, index=0)
 
         df_year = df_books[df_books["end_date"].dt.year == selected_year]
 
         if not df_year.empty:
-            df_year["month"] = df_year["end_date"].dt.strftime("%B")  # month names
+            df_year["month"] = df_year["end_date"].dt.strftime("%B")
             month_order = [
                 "January", "February", "March", "April", "May", "June",
                 "July", "August", "September", "October", "November", "December"
