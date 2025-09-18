@@ -1,16 +1,22 @@
-# Python
+# --- Python ---
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 
-# Virtual environment
+# --- Virtual environments ---
 .venv/
+venv/
 
-# Databases
+# --- Databases ---
 *.db
 *.duckdb
 
-# Streamlit
-.streamlit/
+# --- Logs / temp files ---
+*.log
+*.csv
+*.tmp
 
-# Editors
+# --- IDE / Editor settings ---
 .vscode/
+.idea/
