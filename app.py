@@ -6,13 +6,13 @@ from db import get_connection, init_db
 
 st.set_page_config(page_title="📚🛢️ bookz", layout="wide")
 
-# Ensure DB is ready
+# Ensure DB exists
 init_db()
 
 st.title("📚🛢️ bookz")
 
-# Utility: fetch book details by ISBN
-def fetch_book_details(isbn):
+# --- Utility: fetch book details by ISBN ---
+def fetch_book_details(isbn: str):
     url = f"https://openlibrary.org/isbn/{isbn}.json"
     try:
         r = requests.get(url)
@@ -27,27 +27,26 @@ def fetch_book_details(isbn):
         st.error(f"Error fetching ISBN data: {e}")
         return None
 
-# Tabs for Books and Reviews
+# --- Tabs ---
 tab1, tab2 = st.tabs(["📖 bookz", "⭐ reviewz"])
 
-# --- BOOKS ---
+# ------------------------------------------------------------------
+# 📖 BOOKS TAB
+# ------------------------------------------------------------------
 with tab1:
     st.header("Add a new book")
 
     with st.form("add_book", clear_on_submit=True):
         isbn = st.text_input("ISBN (optional)")
 
-        # Prefill details if ISBN found
         default_title = ""
         default_author = ""
-        if isbn:
+        if isbn and len(isbn) in (10, 13):  # Only check valid ISBNs
             details = fetch_book_details(isbn)
             if details:
                 st.success("Book details found via ISBN")
                 default_title = details["title"]
                 default_author = details["author"]
-
-                # Show cover if available
                 st.image(f"https://covers.openlibrary.org/b/isbn/{isbn}-M.jpg", width=120)
 
         title = st.text_input("Title", value=default_title)
@@ -59,7 +58,6 @@ with tab1:
             index=0
         )
 
-        # Optional Start/End Dates
         start_date = st.date_input("Start Date (optional)", value=None, key="start_date")
         end_date = st.date_input("End Date (optional)", value=None, key="end_date")
 
@@ -68,69 +66,65 @@ with tab1:
             conn = get_connection()
             next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM books").fetchone()[0]
             conn.execute(
-                "INSERT INTO books VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO books (id, title, author, format, start_date, end_date, isbn) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 [next_id, title, author, book_format, start_date, end_date, isbn]
             )
             conn.close()
             st.success(f"Book '{title}' added!")
 
-# --- Bulk Import CSV ---
-st.subheader("📥 Bulk Import Books (CSV)")
-uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
-if uploaded_file is not None:
-    try:
-        df = pd.read_csv(uploaded_file)
+    # --- Bulk Import CSV ---
+    st.subheader("📥 Bulk Import Books (CSV)")
+    uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
+    if uploaded_file is not None:
+        try:
+            df = pd.read_csv(uploaded_file)
+            df.columns = [c.strip().lower() for c in df.columns]
 
-        # Normalize column names (lowercase, strip spaces)
-        df.columns = [c.strip().lower() for c in df.columns]
+            required = {"title", "author"}
+            if not required.issubset(set(df.columns)):
+                st.error(f"CSV must include at least: {required}")
+            else:
+                conn = get_connection()
+                for _, row in df.iterrows():
+                    next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM books").fetchone()[0]
+                    conn.execute(
+                        "INSERT INTO books (id, title, author, format, start_date, end_date, isbn) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        [
+                            next_id,
+                            row.get("title"),
+                            row.get("author"),
+                            row.get("format", "NA"),
+                            row.get("start_date") if pd.notna(row.get("start_date")) else None,
+                            row.get("end_date") if pd.notna(row.get("end_date")) else None,
+                            row.get("isbn") if "isbn" in df.columns else None,
+                        ]
+                    )
+                conn.close()
+                st.success("✅ CSV imported successfully!")
+        except Exception as e:
+            st.error(f"Error importing CSV: {e}")
 
-        # Ensure required columns exist
-        required = {"title", "author"}
-        if not required.issubset(set(df.columns)):
-            st.error(f"CSV must include at least: {required}")
-        else:
-            conn = get_connection()
-            for _, row in df.iterrows():
-                next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM books").fetchone()[0]
-                conn.execute(
-                    "INSERT INTO books (id, title, author, format, start_date, end_date, isbn) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    [
-                        next_id,
-                        row.get("title"),
-                        row.get("author"),
-                        row.get("format", "NA"),
-                        row.get("start_date") if pd.notna(row.get("start_date")) else None,
-                        row.get("end_date") if pd.notna(row.get("end_date")) else None,
-                        row.get("isbn") if "isbn" in df.columns else None,
-                    ]
-                )
-            conn.close()
-            st.success("✅ CSV imported successfully!")
-    except Exception as e:
-        st.error(f"Error importing CSV: {e}")
+    # --- Manage Books ---
+    st.subheader("📚 Manage Books")
+    conn = get_connection()
+    df_books = conn.execute("SELECT * FROM books").fetchdf()
+    conn.close()
 
-# --- Manage Books (Delete) ---
-st.subheader("🗑️ Manage Books")
-conn = get_connection()
-books = conn.execute("SELECT id, title FROM books").fetchall()
-conn.close()
+    if not df_books.empty:
+        st.dataframe(df_books, use_container_width=True)
 
-if books:
-    book_to_delete = st.selectbox("Select book to delete", books, format_func=lambda b: f"{b[1]} (id={b[0]})")
-    if st.button("Delete Book"):
-        conn = get_connection()
-        conn.execute("DELETE FROM books WHERE id = ?", [book_to_delete[0]])
-        conn.close()
-        st.success(f"Deleted book: {book_to_delete[1]}")
+        with st.form("delete_book"):
+            book_to_delete = st.selectbox("Select book to delete", df_books[["id", "title"]].itertuples(index=False), format_func=lambda b: f"{b.id} - {b.title}")
+            delete_btn = st.form_submit_button("Delete Book")
+            if delete_btn:
+                conn = get_connection()
+                conn.execute("DELETE FROM books WHERE id = ?", [book_to_delete.id])
+                conn.close()
+                st.success(f"Book '{book_to_delete.title}' deleted!")
 
-# --- All Books ---
-st.subheader("All Books")
-conn = get_connection()
-df_books = conn.execute("SELECT * FROM books").fetchdf()
-conn.close()
-st.dataframe(df_books, use_container_width=True)
-
-# --- REVIEWS ---
+# ------------------------------------------------------------------
+# ⭐ REVIEWS TAB
+# ------------------------------------------------------------------
 with tab2:
     st.header("Add a review")
     conn = get_connection()
