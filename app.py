@@ -195,53 +195,62 @@ with tab1:
                 conn.close()
                 st.success(f"Book '{book_to_delete.title}' deleted!")
 
-# ------------------------------------------------------------------
-# ⭐ REVIEWS TAB
-# ------------------------------------------------------------------
-with tab2:
-    st.header("Add a review")
-    conn = get_connection()
-    books = conn.execute("SELECT id, title FROM books").fetchall()
-    conn.close()
+    # ------------------------------------------------------------------
+    # ⭐ REVIEWS TAB
+    # ------------------------------------------------------------------
+    with tab2:
+        st.header("Add a review")
 
-    if books:
-        with st.form("add_review", clear_on_submit=True):
-            book_choice = st.selectbox("Book", books, format_func=lambda b: f"{b[1]} (id={b[0]})")
-            rating = st.slider("Rating", 1, 5, 3)
-            comment = st.text_area("Comment")
-            submitted = st.form_submit_button("Add Review")
-            if submitted:
-                conn = get_connection()
-                next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM reviews").fetchone()[0]
-                conn.execute(
-                    "INSERT INTO reviews (id, book_id, rating, comment) VALUES (?, ?, ?, ?)",
-                    [next_id, book_choice[0], rating, comment]
-                )
-                conn.close()
-                st.success("Review added!")
+        # Only select books with an end_date (Completed)
+        conn = get_connection()
+        books = conn.execute("SELECT id, title FROM books WHERE end_date IS NOT NULL").fetchall()
+        conn.close()
 
-    st.subheader("All Reviews")
-    conn = get_connection()
-    df_reviews = conn.execute("""
-        SELECT r.id, b.title, r.rating, r.comment
-        FROM reviews r
-        JOIN books b ON r.book_id = b.id
-    """).fetchdf()
-    conn.close()
-    st.dataframe(df_reviews, use_container_width=True)
+        if books:
+            with st.form("add_review", clear_on_submit=True):
+                book_choice = st.selectbox("Book", books, format_func=lambda b: f"{b[1]} (id={b[0]})")
+                rating = st.slider("Rating", 1, 5, 3)
+                comment = st.text_area("Comment")
+                submitted = st.form_submit_button("Add Review")
+                if submitted:
+                    conn = get_connection()
+                    next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM reviews").fetchone()[0]
+                    conn.execute(
+                        "INSERT INTO reviews (id, book_id, rating, comment) VALUES (?, ?, ?, ?)",
+                        [next_id, book_choice[0], rating, comment]
+                    )
+                    conn.close()
+                    st.success("Review added!")
+        else:
+            st.info("No completed books available to review yet.")
 
-    # --- Books Read This Year Chart ---
-    st.subheader("📊 Books Read This Year")
+        # All Reviews
+        st.subheader("All Reviews")
+        conn = get_connection()
+        df_reviews = conn.execute("""
+            SELECT r.id, b.title, r.rating, r.comment
+            FROM reviews r
+            JOIN books b ON r.book_id = b.id
+        """).fetchdf()
+        conn.close()
+        st.dataframe(df_reviews, use_container_width=True)
+
+    # --- Books Read by Year Chart ---
+    st.subheader("📊 Books Read by Year")
 
     conn = get_connection()
     df_books = conn.execute("SELECT title, end_date FROM books WHERE end_date IS NOT NULL").fetchdf()
     conn.close()
 
     if not df_books.empty:
-        # Filter to current year
-        current_year = date.today().year
         df_books["end_date"] = pd.to_datetime(df_books["end_date"], errors="coerce")
-        df_year = df_books[df_books["end_date"].dt.year == current_year]
+        df_books = df_books.dropna(subset=["end_date"])
+
+        # Year selector
+        years = sorted(df_books["end_date"].dt.year.unique(), reverse=True)
+        selected_year = st.selectbox("Select year", years, index=0)
+
+        df_year = df_books[df_books["end_date"].dt.year == selected_year]
 
         if not df_year.empty:
             df_year["month"] = df_year["end_date"].dt.strftime("%B")  # month names
@@ -258,10 +267,10 @@ with tab2:
                     y=alt.Y("count():Q", title="Books Completed"),
                     tooltip=["count()", "month"]
                 )
-                .properties(width=600, height=400)
+                .properties(width=600, height=400, title=f"Books Completed in {selected_year}")
             )
             st.altair_chart(chart, use_container_width=True)
         else:
-            st.info(f"No books completed in {current_year} yet.")
+            st.info(f"No books completed in {selected_year}.")
     else:
         st.info("No completed books recorded.")
