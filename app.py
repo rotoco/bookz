@@ -4,6 +4,8 @@ import pandas as pd
 import requests
 from datetime import datetime
 from db import get_connection, init_db
+import altair as alt
+from datetime import date
 
 st.set_page_config(page_title="📚🛢️ bookz", layout="wide")
 
@@ -227,3 +229,39 @@ with tab2:
     """).fetchdf()
     conn.close()
     st.dataframe(df_reviews, use_container_width=True)
+
+    # --- Books Read This Year Chart ---
+    st.subheader("📊 Books Read This Year")
+
+    conn = get_connection()
+    df_books = conn.execute("SELECT title, end_date FROM books WHERE end_date IS NOT NULL").fetchdf()
+    conn.close()
+
+    if not df_books.empty:
+        # Filter to current year
+        current_year = date.today().year
+        df_books["end_date"] = pd.to_datetime(df_books["end_date"], errors="coerce")
+        df_year = df_books[df_books["end_date"].dt.year == current_year]
+
+        if not df_year.empty:
+            df_year["month"] = df_year["end_date"].dt.strftime("%B")  # month names
+            month_order = [
+                "January", "February", "March", "April", "May", "June",
+                "July", "August", "September", "October", "November", "December"
+            ]
+
+            chart = (
+                alt.Chart(df_year)
+                .mark_bar()
+                .encode(
+                    x=alt.X("month:N", sort=month_order, title="Month"),
+                    y=alt.Y("count():Q", title="Books Completed"),
+                    tooltip=["count()", "month"]
+                )
+                .properties(width=600, height=400)
+            )
+            st.altair_chart(chart, use_container_width=True)
+        else:
+            st.info(f"No books completed in {current_year} yet.")
+    else:
+        st.info("No completed books recorded.")
