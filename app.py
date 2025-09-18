@@ -2,6 +2,7 @@ import streamlit as st
 import duckdb
 import pandas as pd
 import requests
+from datetime import datetime
 from db import get_connection, init_db
 
 st.set_page_config(page_title="📚🛢️ bookz", layout="wide")
@@ -26,6 +27,19 @@ def fetch_book_details(isbn: str):
     except Exception as e:
         st.error(f"Error fetching ISBN data: {e}")
         return None
+
+# --- Utility: normalize dates ---
+def normalize_date(val):
+    """Convert a date string to YYYY-MM-DD if possible, else return None."""
+    if pd.isna(val) or not val:
+        return None
+    try:
+        return datetime.strptime(str(val), "%Y-%m-%d").date()
+    except ValueError:
+        try:
+            return datetime.strptime(str(val), "%m/%d/%Y").date()
+        except ValueError:
+            return None
 
 # --- Tabs ---
 tab1, tab2 = st.tabs(["📖 bookz", "⭐ reviewz"])
@@ -80,27 +94,42 @@ with tab1:
             df = pd.read_csv(uploaded_file)
             df.columns = [c.strip().lower() for c in df.columns]
 
-            required = {"title", "author"}
-            if not required.issubset(set(df.columns)):
-                st.error(f"CSV must include at least: {required}")
+            if not ({"title", "author"}.issubset(set(df.columns)) or "isbn" in df.columns):
+                st.error("CSV must include either title+author, or at least isbn.")
             else:
                 conn = get_connection()
                 for _, row in df.iterrows():
+                    title = row.get("title") if pd.notna(row.get("title")) else ""
+                    author = row.get("author") if pd.notna(row.get("author")) else ""
+                    isbn = row.get("isbn") if "isbn" in df.columns and pd.notna(row.get("isbn")) else None
+
+                    # Auto-fill missing title/author from ISBN
+                    if isbn and (not title or not author):
+                        details = fetch_book_details(str(isbn))
+                        if details:
+                            if not title:
+                                title = details["title"]
+                            if not author:
+                                author = details["author"]
+
+                    start_date = normalize_date(row.get("start_date"))
+                    end_date = normalize_date(row.get("end_date"))
+
                     next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM books").fetchone()[0]
                     conn.execute(
                         "INSERT INTO books (id, title, author, format, start_date, end_date, isbn) VALUES (?, ?, ?, ?, ?, ?, ?)",
                         [
                             next_id,
-                            row.get("title"),
-                            row.get("author"),
+                            title,
+                            author,
                             row.get("format", "NA"),
-                            row.get("start_date") if pd.notna(row.get("start_date")) else None,
-                            row.get("end_date") if pd.notna(row.get("end_date")) else None,
-                            row.get("isbn") if "isbn" in df.columns else None,
+                            start_date,
+                            end_date,
+                            isbn,
                         ]
                     )
                 conn.close()
-                st.success("✅ CSV imported successfully!")
+                st.success("✅ CSV imported successfully with ISBN auto-fill!")
         except Exception as e:
             st.error(f"Error importing CSV: {e}")
 
@@ -114,7 +143,11 @@ with tab1:
         st.dataframe(df_books, use_container_width=True)
 
         with st.form("delete_book"):
-            book_to_delete = st.selectbox("Select book to delete", df_books[["id", "title"]].itertuples(index=False), format_func=lambda b: f"{b.id} - {b.title}")
+            book_to_delete = st.selectbox(
+                "Select book to delete",
+                df_books[["id", "title"]].itertuples(index=False),
+                format_func=lambda b: f"{b.id} - {b.title}"
+            )
             delete_btn = st.form_submit_button("Delete Book")
             if delete_btn:
                 conn = get_connection()
