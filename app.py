@@ -181,12 +181,27 @@ with tab1:
                 # Delete
                 if st.button("🗑️ Delete Book", key=f"delete_{row['id']}"):
                     conn = get_connection()
+                    conn.execute("DELETE FROM reviews WHERE book_id=?", [row["id"]])
                     conn.execute("DELETE FROM books WHERE id=?", [row["id"]])
                     conn.close()
                     st.warning(f"Deleted '{row['title']}'")
                     st.experimental_rerun()
     else:
         st.info("No books in your collection yet.")
+
+    # --- Danger Zone: Delete ALL ---
+    st.subheader("⚠️ Danger Zone")
+    with st.expander("Delete ALL Books"):
+        st.warning("This will remove ALL books and reviews from your library. This cannot be undone!")
+
+        confirm = st.checkbox("Yes, I understand. Delete everything.", key="confirm_delete_all")
+        if st.button("🗑️ Delete ALL Books", key="delete_all") and confirm:
+            conn = get_connection()
+            conn.execute("DELETE FROM reviews")
+            conn.execute("DELETE FROM books")
+            conn.close()
+            st.success("✅ All books and reviews have been deleted.")
+            st.experimental_rerun()
 
 
 # --- REVIEWS TAB ---
