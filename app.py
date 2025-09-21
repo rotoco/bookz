@@ -35,7 +35,7 @@ tab1, tab2, tab3 = st.tabs(["📖 bookz", "⭐ reviewz", "⚙️ manage"])
 
 # --- BOOKS TAB ---
 with tab1:
-    st.header("Add a new book")
+    st.header("Add new book")
 
     with st.form("add_book", clear_on_submit=True):
         isbn = st.text_input("ISBN (optional)")
