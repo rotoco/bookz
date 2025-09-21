@@ -29,8 +29,8 @@ def fetch_book_details(isbn):
         return None
 
 
-# Tabs for Books and Reviews
-tab1, tab2 = st.tabs(["📖 bookz", "⭐ reviewz"])
+# Tabs for Books, Reviews, Manage
+tab1, tab2, tab3 = st.tabs(["📖 bookz", "⭐ reviewz", "⚙️ manage"])
 
 
 # --- BOOKS TAB ---
@@ -125,83 +125,16 @@ with tab1:
         except Exception as e:
             st.error(f"Error importing CSV: {e}")
 
-    # --- Manage Books ---
-    st.subheader("⚙️ Manage Books")
-
+    # --- All Books Table ---
+    st.subheader("📚 All Books")
     conn = get_connection()
     df_books = conn.execute("SELECT * FROM books").fetchdf()
     conn.close()
 
     if not df_books.empty:
-        for _, row in df_books.iterrows():
-            with st.expander(f"{row['title']} by {row['author']}"):
-                # Format
-                formats = ["NA", "Audiobook", "Hardcover", "Paperback", "pdf"]
-                current_format = row["format"] if row["format"] in formats else "NA"
-                new_format = st.selectbox(
-                    "Format",
-                    formats,
-                    index=formats.index(current_format),
-                    key=f"format_{row['id']}"
-                )
-
-                # Dates
-                new_start = st.date_input(
-                    "Start Date",
-                    value=None if pd.isna(row["start_date"]) else pd.to_datetime(row["start_date"]).date(),
-                    key=f"start_{row['id']}"
-                )
-                new_end = st.date_input(
-                    "End Date",
-                    value=None if pd.isna(row["end_date"]) else pd.to_datetime(row["end_date"]).date(),
-                    key=f"end_{row['id']}"
-                )
-
-                # ISBN
-                new_isbn = st.text_input(
-                    "ISBN",
-                    value="" if pd.isna(row["isbn"]) else row["isbn"],
-                    key=f"isbn_{row['id']}"
-                )
-
-                # Save
-                if st.button("💾 Save Changes", key=f"save_{row['id']}"):
-                    conn = get_connection()
-                    conn.execute(
-                        """
-                        UPDATE books
-                        SET format=?, start_date=?, end_date=?, isbn=?
-                        WHERE id=?
-                        """,
-                        [new_format, new_start, new_end, new_isbn, row["id"]],
-                    )
-                    conn.close()
-                    st.success(f"Updated '{row['title']}'")
-
-                # Delete
-                if st.button("🗑️ Delete Book", key=f"delete_{row['id']}"):
-                    conn = get_connection()
-                    conn.execute("DELETE FROM reviews WHERE book_id=?", [row["id"]])
-                    conn.execute("DELETE FROM books WHERE id=?", [row["id"]])
-                    conn.close()
-                    st.warning(f"Deleted '{row['title']}'")
-                    st.experimental_rerun()
+        st.dataframe(df_books, use_container_width=True)
     else:
         st.info("No books in your collection yet.")
-
-    # --- Danger Zone: Delete ALL ---
-    st.subheader("⚠️ Danger Zone")
-    with st.expander("Delete ALL Books"):
-        st.warning("This will remove ALL books and reviews from your library. This cannot be undone!")
-
-        confirm = st.checkbox("Yes, I understand. Delete everything.", key="confirm_delete_all")
-        if st.button("🗑️ Delete ALL Books", key="delete_all") and confirm:
-            conn = get_connection()
-            conn.execute("DELETE FROM reviews")
-            conn.execute("DELETE FROM books")
-            conn.close()
-            st.success("✅ All books and reviews have been deleted.")
-            st.experimental_rerun()
 
 
 # --- REVIEWS TAB ---
@@ -274,3 +207,92 @@ with tab2:
             st.info(f"No books completed in {selected_year}.")
     else:
         st.info("No completed books recorded.")
+
+
+# --- MANAGE TAB ---
+with tab3:
+    st.header("⚙️ Manage Books")
+
+    conn = get_connection()
+    df_books = conn.execute("SELECT * FROM books").fetchdf()
+    conn.close()
+
+    if not df_books.empty:
+        # Book selector
+        book_choice = st.selectbox(
+            "Select a book to manage",
+            df_books.to_dict("records"),
+            format_func=lambda b: f"{b['title']} by {b['author']}" if b else "Select...",
+        )
+
+        if book_choice:
+            book_id = book_choice["id"]
+
+            # Format
+            formats = ["NA", "Audiobook", "Hardcover", "Paperback", "pdf"]
+            current_format = book_choice["format"] if book_choice["format"] in formats else "NA"
+            new_format = st.selectbox(
+                "Format",
+                formats,
+                index=formats.index(current_format),
+                key=f"format_{book_id}"
+            )
+
+            # Dates
+            new_start = st.date_input(
+                "Start Date",
+                value=None if pd.isna(book_choice["start_date"]) else pd.to_datetime(book_choice["start_date"]).date(),
+                key=f"start_{book_id}"
+            )
+            new_end = st.date_input(
+                "End Date",
+                value=None if pd.isna(book_choice["end_date"]) else pd.to_datetime(book_choice["end_date"]).date(),
+                key=f"end_{book_id}"
+            )
+
+            # ISBN
+            new_isbn = st.text_input(
+                "ISBN",
+                value="" if pd.isna(book_choice["isbn"]) else book_choice["isbn"],
+                key=f"isbn_{book_id}"
+            )
+
+            # Save
+            if st.button("💾 Save Changes", key=f"save_{book_id}"):
+                conn = get_connection()
+                conn.execute(
+                    """
+                    UPDATE books
+                    SET format=?, start_date=?, end_date=?, isbn=?
+                    WHERE id=?
+                    """,
+                    [new_format, new_start, new_end, new_isbn, book_id],
+                )
+                conn.close()
+                st.success(f"Updated '{book_choice['title']}'")
+
+            # Delete
+            if st.button("🗑️ Delete Book", key=f"delete_{book_id}"):
+                conn = get_connection()
+                conn.execute("DELETE FROM reviews WHERE book_id=?", [book_id])
+                conn.execute("DELETE FROM books WHERE id=?", [book_id])
+                conn.close()
+                st.warning(f"Deleted '{book_choice['title']}'")
+                st.experimental_rerun()
+
+    else:
+        st.info("No books in your collection yet.")
+
+    # --- Danger Zone: Delete ALL ---
+    st.subheader("⚠️ Danger Zone")
+    with st.expander("Delete ALL Books"):
+        st.warning("This will remove ALL books and reviews from your library. This cannot be undone!")
+
+        confirm = st.checkbox("Yes, I understand. Delete everything.", key="confirm_delete_all")
+        if st.button("🗑️ Delete ALL Books", key="delete_all") and confirm:
+            conn = get_connection()
+            conn.execute("DELETE FROM reviews")
+            conn.execute("DELETE FROM books")
+            conn.close()
+            st.success("✅ All books and reviews have been deleted.")
+            st.experimental_rerun()
