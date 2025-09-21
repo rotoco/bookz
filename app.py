@@ -3,18 +3,17 @@ import duckdb
 import pandas as pd
 import requests
 import altair as alt
-from datetime import datetime, date
 from db import get_connection, init_db
 
 st.set_page_config(page_title="📚🛢️ bookz", layout="wide")
 
-# Ensure DB exists
+# Ensure DB is ready
 init_db()
 
 st.title("📚🛢️ bookz")
 
-# --- Utility: fetch book details by ISBN ---
-def fetch_book_details(isbn: str):
+# Utility: fetch book details by ISBN
+def fetch_book_details(isbn):
     url = f"https://openlibrary.org/isbn/{isbn}.json"
     try:
         r = requests.get(url)
@@ -29,39 +28,29 @@ def fetch_book_details(isbn: str):
         st.error(f"Error fetching ISBN data: {e}")
         return None
 
-# --- Utility: normalize dates ---
-def normalize_date(val):
-    """Convert a date string to YYYY-MM-DD if possible, else return None."""
-    if pd.isna(val) or not val:
-        return None
-    try:
-        return datetime.strptime(str(val), "%Y-%m-%d").date()
-    except ValueError:
-        try:
-            return datetime.strptime(str(val), "%m/%d/%Y").date()
-        except ValueError:
-            return None
 
-# --- Tabs ---
+# Tabs for Books and Reviews
 tab1, tab2 = st.tabs(["📖 bookz", "⭐ reviewz"])
 
-# ------------------------------------------------------------------
-# 📖 BOOKS TAB
-# ------------------------------------------------------------------
+
+# --- BOOKS TAB ---
 with tab1:
     st.header("Add a new book")
 
     with st.form("add_book", clear_on_submit=True):
         isbn = st.text_input("ISBN (optional)")
 
+        # Prefill details if ISBN found
         default_title = ""
         default_author = ""
-        if isbn and len(isbn) in (10, 13):  # Only check valid ISBNs
+        if isbn:
             details = fetch_book_details(isbn)
             if details:
                 st.success("Book details found via ISBN")
                 default_title = details["title"]
                 default_author = details["author"]
+
+                # Show cover if available
                 st.image(f"https://covers.openlibrary.org/b/isbn/{isbn}-M.jpg", width=120)
 
         title = st.text_input("Title", value=default_title)
@@ -73,6 +62,7 @@ with tab1:
             index=0
         )
 
+        # Optional Start/End Dates
         start_date = st.date_input("Start Date (optional)", value=None, key="start_date")
         end_date = st.date_input("End Date (optional)", value=None, key="end_date")
 
@@ -81,7 +71,7 @@ with tab1:
             conn = get_connection()
             next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM books").fetchone()[0]
             conn.execute(
-                "INSERT INTO books (id, title, author, format, start_date, end_date, isbn) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO books VALUES (?, ?, ?, ?, ?, ?, ?)",
                 [next_id, title, author, book_format, start_date, end_date, isbn]
             )
             conn.close()
@@ -92,115 +82,118 @@ with tab1:
     uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
     if uploaded_file is not None:
         try:
-            df = pd.read_csv(uploaded_file)
+            # Try utf-8, fallback to latin1
+            try:
+                df = pd.read_csv(uploaded_file)
+            except UnicodeDecodeError:
+                df = pd.read_csv(uploaded_file, encoding="latin1")
+
+            # Normalize column names
             df.columns = [c.strip().lower() for c in df.columns]
 
-            if not ({"title", "author"}.issubset(set(df.columns)) or "isbn" in df.columns):
-                st.error("CSV must include either title+author, or at least isbn.")
+            # Ensure required columns exist
+            required = {"title", "author"}
+            if not required.issubset(set(df.columns)):
+                st.error(f"CSV must include at least: {required}")
             else:
                 conn = get_connection()
                 for _, row in df.iterrows():
-                    title = row.get("title") if pd.notna(row.get("title")) else ""
-                    author = row.get("author") if pd.notna(row.get("author")) else ""
-                    isbn = row.get("isbn") if "isbn" in df.columns and pd.notna(row.get("isbn")) else None
-
-                    # Auto-fill missing title/author from ISBN
-                    if isbn and (not title or not author):
-                        details = fetch_book_details(str(isbn))
-                        if details:
-                            if not title:
-                                title = details["title"]
-                            if not author:
-                                author = details["author"]
-
-                    start_date = normalize_date(row.get("start_date"))
-                    end_date = normalize_date(row.get("end_date"))
-
                     next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM books").fetchone()[0]
+
+                    # Parse dates safely
+                    start_date = None
+                    end_date = None
+                    if "start_date" in df.columns and pd.notna(row.get("start_date")):
+                        start_date = pd.to_datetime(row["start_date"], errors="coerce")
+                    if "end_date" in df.columns and pd.notna(row.get("end_date")):
+                        end_date = pd.to_datetime(row["end_date"], errors="coerce")
+
                     conn.execute(
                         "INSERT INTO books (id, title, author, format, start_date, end_date, isbn) VALUES (?, ?, ?, ?, ?, ?, ?)",
                         [
                             next_id,
-                            title,
-                            author,
+                            row.get("title"),
+                            row.get("author"),
                             row.get("format", "NA"),
-                            start_date,
-                            end_date,
-                            isbn,
+                            start_date.date() if pd.notna(start_date) else None,
+                            end_date.date() if pd.notna(end_date) else None,
+                            row.get("isbn") if "isbn" in df.columns else None,
                         ]
                     )
                 conn.close()
-                st.success("✅ CSV imported successfully with ISBN auto-fill!")
+                st.success("✅ CSV imported successfully!")
         except Exception as e:
             st.error(f"Error importing CSV: {e}")
 
     # --- Manage Books ---
-    st.subheader("📚 Manage Books")
+    st.subheader("⚙️ Manage Books")
+
     conn = get_connection()
     df_books = conn.execute("SELECT * FROM books").fetchdf()
     conn.close()
 
     if not df_books.empty:
-        # Progress column
-        def compute_progress(row):
-            if pd.isna(row["start_date"]):
-                return "Not Started"
-            elif pd.isna(row["end_date"]):
-                return "In Progress"
-            else:
-                return "Completed"
-
-        df_books["progress"] = df_books.apply(compute_progress, axis=1)
-        st.dataframe(df_books, use_container_width=True)
-
-        # Update form
-        with st.form("update_book"):
-            book_to_update = st.selectbox(
-                "Select book to update",
-                df_books.itertuples(index=False),
-                format_func=lambda b: f"{b.id} - {b.title}"
-            )
-
-            new_format = st.selectbox(
-                "Format",
-                ["NA", "Audiobook", "Hardcover", "Paperback", "pdf"],
-                index=["NA", "Audiobook", "Hardcover", "Paperback", "pdf"].index(book_to_update.format)
-            )
-            new_start = st.date_input("Start Date", value=None if pd.isna(book_to_update.start_date) else book_to_update.start_date)
-            new_end = st.date_input("End Date", value=None if pd.isna(book_to_update.end_date) else book_to_update.end_date)
-
-            update_btn = st.form_submit_button("Update Book")
-            if update_btn:
-                conn = get_connection()
-                conn.execute(
-                    "UPDATE books SET format = ?, start_date = ?, end_date = ? WHERE id = ?",
-                    [new_format, new_start if new_start else None, new_end if new_end else None, book_to_update.id]
+        for _, row in df_books.iterrows():
+            with st.expander(f"{row['title']} by {row['author']}"):
+                # Format
+                formats = ["NA", "Audiobook", "Hardcover", "Paperback", "pdf"]
+                current_format = row["format"] if row["format"] in formats else "NA"
+                new_format = st.selectbox(
+                    "Format",
+                    formats,
+                    index=formats.index(current_format),
+                    key=f"format_{row['id']}"
                 )
-                conn.close()
-                st.success(f"Book '{book_to_update.title}' updated!")
 
-        # Delete form
-        with st.form("delete_book"):
-            book_to_delete = st.selectbox(
-                "Select book to delete",
-                df_books.itertuples(index=False),
-                format_func=lambda b: f"{b.id} - {b.title}"
-            )
-            delete_btn = st.form_submit_button("Delete Book")
-            if delete_btn:
-                conn = get_connection()
-                conn.execute("DELETE FROM books WHERE id = ?", [book_to_delete.id])
-                conn.close()
-                st.success(f"Book '{book_to_delete.title}' deleted!")
+                # Dates
+                new_start = st.date_input(
+                    "Start Date",
+                    value=None if pd.isna(row["start_date"]) else pd.to_datetime(row["start_date"]).date(),
+                    key=f"start_{row['id']}"
+                )
+                new_end = st.date_input(
+                    "End Date",
+                    value=None if pd.isna(row["end_date"]) else pd.to_datetime(row["end_date"]).date(),
+                    key=f"end_{row['id']}"
+                )
 
-# ------------------------------------------------------------------
-# ⭐ REVIEWS TAB
-# ------------------------------------------------------------------
+                # ISBN
+                new_isbn = st.text_input(
+                    "ISBN",
+                    value="" if pd.isna(row["isbn"]) else row["isbn"],
+                    key=f"isbn_{row['id']}"
+                )
+
+                # Save
+                if st.button("💾 Save Changes", key=f"save_{row['id']}"):
+                    conn = get_connection()
+                    conn.execute(
+                        """
+                        UPDATE books
+                        SET format=?, start_date=?, end_date=?, isbn=?
+                        WHERE id=?
+                        """,
+                        [new_format, new_start, new_end, new_isbn, row["id"]],
+                    )
+                    conn.close()
+                    st.success(f"Updated '{row['title']}'")
+
+                # Delete
+                if st.button("🗑️ Delete Book", key=f"delete_{row['id']}"):
+                    conn = get_connection()
+                    conn.execute("DELETE FROM books WHERE id=?", [row["id"]])
+                    conn.close()
+                    st.warning(f"Deleted '{row['title']}'")
+                    st.experimental_rerun()
+    else:
+        st.info("No books in your collection yet.")
+
+
+# --- REVIEWS TAB ---
 with tab2:
     st.header("Add a review")
-
-    # Only select books with an end_date (Completed)
     conn = get_connection()
+    # Only completed books (end_date not null)
     books = conn.execute("SELECT id, title FROM books WHERE end_date IS NOT NULL").fetchall()
     conn.close()
 
@@ -219,10 +212,7 @@ with tab2:
                 )
                 conn.close()
                 st.success("Review added!")
-    else:
-        st.info("No completed books available to review yet.")
 
-    # All Reviews
     st.subheader("All Reviews")
     conn = get_connection()
     df_reviews = conn.execute("""
@@ -235,7 +225,6 @@ with tab2:
 
     # --- Books Read by Year Chart ---
     st.subheader("📊 Books Read by Year")
-
     conn = get_connection()
     df_books = conn.execute("SELECT title, end_date FROM books WHERE end_date IS NOT NULL").fetchdf()
     conn.close()
@@ -248,7 +237,6 @@ with tab2:
         selected_year = st.selectbox("Select year", years, index=0)
 
         df_year = df_books[df_books["end_date"].dt.year == selected_year]
-
         if not df_year.empty:
             df_year["month"] = df_year["end_date"].dt.strftime("%B")
             month_order = [
