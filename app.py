@@ -4,6 +4,7 @@ import pandas as pd
 import requests
 import altair as alt
 from db import get_connection, init_db
+from concurrent.futures import ThreadPoolExecutor
 
 st.set_page_config(page_title="📚🛢️ bookz", layout="wide")
 
@@ -12,18 +13,43 @@ init_db()
 
 st.title("📚🛢️ bookz")
 
-# Utility: fetch book details by ISBN
+# Utility: fetch author name by key
+def fetch_author_name(author_key):
+    try:
+        ar = requests.get(f"https://openlibrary.org{author_key}.json")
+        if ar.status_code == 200:
+            return ar.json().get("name", None)
+    except:
+        return None
+    return None
+
+# Utility: fetch book details by ISBN (parallel author fetching)
 def fetch_book_details(isbn):
     url = f"https://openlibrary.org/isbn/{isbn}.json"
     try:
         r = requests.get(url)
-        if r.status_code == 200:
-            data = r.json()
-            return {
-                "title": data.get("title", ""),
-                "author": ", ".join([a.get("name", "") for a in data.get("authors", [])]) if "authors" in data else "",
-            }
-        return None
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        
+        # Fetch authors in parallel
+        authors = []
+        with ThreadPoolExecutor() as executor:
+            futures = []
+            for a in data.get("authors", []):
+                key = a.get("key")
+                if key:
+                    futures.append(executor.submit(fetch_author_name, key))
+            for f in futures:
+                name = f.result()
+                if name:
+                    authors.append(name)
+        
+        return {
+            "title": data.get("title", "Unknown Title"),
+            "author": ", ".join(authors) if authors else "Unknown Author",
+            "cover_url": f"https://covers.openlibrary.org/b/isbn/{isbn}-M.jpg"
+        }
     except Exception as e:
         st.error(f"Error fetching ISBN data: {e}")
         return None
@@ -37,11 +63,11 @@ tab1, tab2, tab3 = st.tabs(["📖 bookz", "⭐ reviewz", "⚙️ manage"])
 with tab1:
     st.header("Add a new book")
 
-    # ISBN input FIRST (outside the form)
     isbn = st.text_input("ISBN (optional, press Enter to fetch details)")
 
     default_title = ""
     default_author = ""
+    default_cover = None
 
     if isbn:
         details = fetch_book_details(isbn)
@@ -49,13 +75,12 @@ with tab1:
             st.success("✅ Book details found via ISBN")
             default_title = details["title"]
             default_author = details["author"]
-
-            # Show cover if available
-            st.image(f"https://covers.openlibrary.org/b/isbn/{isbn}-M.jpg", width=120)
+            default_cover = details["cover_url"]
+            st.image(default_cover, width=120)
         else:
             st.warning("⚠️ No details found for that ISBN.")
 
-    # Now the form uses the fetched defaults
+    # Form for adding book
     with st.form("add_book", clear_on_submit=True):
         title = st.text_input("Title", value=default_title)
         author = st.text_input("Author", value=default_author)
@@ -80,22 +105,17 @@ with tab1:
             conn.close()
             st.success(f"Book '{title}' added!")
 
-
     # --- Bulk Import CSV ---
     st.subheader("📥 Bulk Import Books (CSV)")
     uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
     if uploaded_file is not None:
         try:
-            # Try utf-8, fallback to latin1
             try:
                 df = pd.read_csv(uploaded_file)
             except UnicodeDecodeError:
                 df = pd.read_csv(uploaded_file, encoding="latin1")
 
-            # Normalize column names
             df.columns = [c.strip().lower() for c in df.columns]
-
-            # Ensure required columns exist
             required = {"title", "author"}
             if not required.issubset(set(df.columns)):
                 st.error(f"CSV must include at least: {required}")
@@ -103,8 +123,6 @@ with tab1:
                 conn = get_connection()
                 for _, row in df.iterrows():
                     next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM books").fetchone()[0]
-
-                    # Parse dates safely
                     start_date = None
                     end_date = None
                     if "start_date" in df.columns and pd.notna(row.get("start_date")):
@@ -145,7 +163,6 @@ with tab1:
 with tab2:
     st.header("Add a review")
     conn = get_connection()
-    # Only completed books (end_date not null)
     books = conn.execute("SELECT id, title FROM books WHERE end_date IS NOT NULL").fetchall()
     conn.close()
 
@@ -222,7 +239,6 @@ with tab3:
     conn.close()
 
     if not df_books.empty:
-        # Book selector
         book_choice = st.selectbox(
             "Select a book to manage",
             df_books.to_dict("records"),
@@ -232,7 +248,6 @@ with tab3:
         if book_choice:
             book_id = book_choice["id"]
 
-            # Format
             formats = ["NA", "Audiobook", "Hardcover", "Paperback", "pdf"]
             current_format = book_choice["format"] if book_choice["format"] in formats else "NA"
             new_format = st.selectbox(
@@ -242,7 +257,6 @@ with tab3:
                 key=f"format_{book_id}"
             )
 
-            # Dates
             new_start = st.date_input(
                 "Start Date",
                 value=None if pd.isna(book_choice["start_date"]) else pd.to_datetime(book_choice["start_date"]).date(),
@@ -254,14 +268,12 @@ with tab3:
                 key=f"end_{book_id}"
             )
 
-            # ISBN
             new_isbn = st.text_input(
                 "ISBN",
                 value="" if pd.isna(book_choice["isbn"]) else book_choice["isbn"],
                 key=f"isbn_{book_id}"
             )
 
-            # Save
             if st.button("💾 Save Changes", key=f"save_{book_id}"):
                 conn = get_connection()
                 conn.execute(
@@ -275,7 +287,6 @@ with tab3:
                 conn.close()
                 st.success(f"Updated '{book_choice['title']}'")
 
-            # Delete
             if st.button("🗑️ Delete Book", key=f"delete_{book_id}"):
                 conn = get_connection()
                 conn.execute("DELETE FROM reviews WHERE book_id=?", [book_id])
@@ -287,7 +298,6 @@ with tab3:
     else:
         st.info("No books in your collection yet.")
 
-    # --- Danger Zone: Delete ALL ---
     st.subheader("⚠️ Danger Zone")
     with st.expander("Delete ALL Books"):
         st.warning("This will remove ALL books and reviews from your library. This cannot be undone!")
