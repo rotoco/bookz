@@ -37,26 +37,22 @@ tab1, tab2, tab3 = st.tabs(["📖 bookz", "⭐ reviewz", "⚙️ manage"])
 with tab1:
     st.header("Add a new book")
 
-    # ISBN input FIRST (outside the form)
-    isbn = st.text_input("ISBN (optional, press Enter to fetch details)")
-
-    default_title = ""
-    default_author = ""
-
-    if isbn:
-        details = fetch_book_details(isbn)
-        if details:
-            st.success("✅ Book details found via ISBN")
-            default_title = details["title"]
-            default_author = details["author"]
-
-            # Show cover if available
-            st.image(f"https://covers.openlibrary.org/b/isbn/{isbn}-M.jpg", width=120)
-        else:
-            st.warning("⚠️ No details found for that ISBN.")
-
-    # Now the form uses the fetched defaults
     with st.form("add_book", clear_on_submit=True):
+        isbn = st.text_input("ISBN (optional)")
+
+        # Prefill details if ISBN found
+        default_title = ""
+        default_author = ""
+        if isbn:
+            details = fetch_book_details(isbn)
+            if details:
+                st.success("Book details found via ISBN")
+                default_title = details["title"]
+                default_author = details["author"]
+
+                # Show cover if available
+                st.image(f"https://covers.openlibrary.org/b/isbn/{isbn}-M.jpg", width=120)
+
         title = st.text_input("Title", value=default_title)
         author = st.text_input("Author", value=default_author)
 
@@ -66,6 +62,7 @@ with tab1:
             index=0
         )
 
+        # Optional Start/End Dates
         start_date = st.date_input("Start Date (optional)", value=None, key="start_date")
         end_date = st.date_input("End Date (optional)", value=None, key="end_date")
 
@@ -79,7 +76,6 @@ with tab1:
             )
             conn.close()
             st.success(f"Book '{title}' added!")
-
 
     # --- Bulk Import CSV ---
     st.subheader("📥 Bulk Import Books (CSV)")
