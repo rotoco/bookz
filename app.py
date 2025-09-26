@@ -7,42 +7,42 @@ import streamlit_authenticator as stauth
 from concurrent.futures import ThreadPoolExecutor
 from db import get_connection, init_db
 
-st.set_page_config(page_title="📚🛢️ bookz", layout="wide")
+# --- Authentication setup ---
+names = ["Alice Example", "Bob Example"]
+usernames = ["alice", "bob"]
+passwords = ["abc123", "def456"]
 
-# ---------------------------------------------------------------------
-# 🔑 Authentication Setup
-# ---------------------------------------------------------------------
+# Hash passwords
+hashed_passwords = stauth.Hasher(passwords).generate()
+
 credentials = {
     "usernames": {
-        "alice": {
-            "name": "Alice Smith",
-            "password": stauth.Hasher(["abc123"]).generate()[0],
-        },
-        "bob": {
-            "name": "Bob Jones",
-            "password": stauth.Hasher(["def456"]).generate()[0],
-        },
+        usernames[i]: {
+            "name": names[i],
+            "password": hashed_passwords[i]
+        }
+        for i in range(len(usernames))
     }
 }
 
 authenticator = stauth.Authenticate(
     credentials,
-    "bookz_cookie",      # cookie name
-    "abcdef",            # signature key
-    cookie_expiry_days=30,
+    cookie_name="bookz_cookie",
+    key="abcdef",
+    cookie_expiry_days=30
 )
 
-# Ensure this file is re-read by the deployment service
+# --- LOGIN ---
+# Use a single line, valid location string: "main", "sidebar", or "unrendered"
 name, authentication_status, username = authenticator.login("Login", "main")
 
+# Handle authentication outcomes
 if authentication_status is False:
     st.error("❌ Username/password is incorrect")
 elif authentication_status is None:
-    st.warning("👆 Please enter your username and password")
+    st.warning("⚠️ Please enter your username and password")
 else:
-    # Logged in
-    authenticator.logout("Logout", "sidebar")
-    st.sidebar.success(f"Welcome, {name}! 👋")
+    st.success(f"Welcome {name}!")
 
     # -----------------------------------------------------------------
     # Database
