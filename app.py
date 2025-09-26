@@ -12,19 +12,26 @@ st.set_page_config(page_title="📚🛢️ bookz", layout="wide")
 # ---------------------------------------------------------------------
 # 🔑 Authentication Setup
 # ---------------------------------------------------------------------
-names = ["Alice Smith", "Bob Jones"]
-usernames = ["alice", "bob"]
-# ⚠️ In production, hash your passwords and store in .streamlit/secrets.toml
-passwords = stauth.Hasher(["abc123", "def456"]).generate()
+credentials = {
+    "usernames": {
+        "alice": {
+            "name": "Alice Smith",
+            "password": stauth.Hasher(["abc123"]).generate()[0],
+        },
+        "bob": {
+            "name": "Bob Jones",
+            "password": stauth.Hasher(["def456"]).generate()[0],
+        },
+    }
+}
 
 authenticator = stauth.Authenticate(
-    names,
-    usernames,
-    passwords,
+    credentials,
     "bookz_cookie",      # cookie name
     "abcdef",            # signature key
     cookie_expiry_days=30,
 )
+
 
 name, authentication_status, username = authenticator.login("Login", "main")
 
