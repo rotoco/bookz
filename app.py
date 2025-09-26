@@ -32,7 +32,7 @@ authenticator = stauth.Authenticate(
     cookie_expiry_days=30,
 )
 
-
+# Ensure this file is re-read by the deployment service
 name, authentication_status, username = authenticator.login("Login", "main")
 
 if authentication_status is False:
