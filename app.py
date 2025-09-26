@@ -163,21 +163,26 @@ with tab1:
 with tab2:
     st.header("Add a review")
     conn = get_connection()
+    # Only completed books
     books = conn.execute("SELECT id, title FROM books WHERE end_date IS NOT NULL").fetchall()
     conn.close()
 
     if books:
         with st.form("add_review", clear_on_submit=True):
             book_choice = st.selectbox("Book", books, format_func=lambda b: f"{b[1]} (id={b[0]})")
-            rating = st.slider("Rating", 1, 5, 3)
+
+            # New dual rating system
+            form_score = st.slider("🎨 Form", -10, 10, 0)
+            function_score = st.slider("⚙️ Function", -10, 10, 0)
+
             comment = st.text_area("Comment")
             submitted = st.form_submit_button("Add Review")
             if submitted:
                 conn = get_connection()
                 next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM reviews").fetchone()[0]
                 conn.execute(
-                    "INSERT INTO reviews (id, book_id, rating, comment) VALUES (?, ?, ?, ?)",
-                    [next_id, book_choice[0], rating, comment]
+                    "INSERT INTO reviews (id, book_id, form, function, comment) VALUES (?, ?, ?, ?, ?)",
+                    [next_id, book_choice[0], form_score, function_score, comment]
                 )
                 conn.close()
                 st.success("Review added!")
@@ -185,7 +190,7 @@ with tab2:
     st.subheader("All Reviews")
     conn = get_connection()
     df_reviews = conn.execute("""
-        SELECT r.id, b.title, r.rating, r.comment
+        SELECT r.id, b.title, r.form, r.function, r.comment
         FROM reviews r
         JOIN books b ON r.book_id = b.id
     """).fetchdf()
@@ -228,6 +233,7 @@ with tab2:
             st.info(f"No books completed in {selected_year}.")
     else:
         st.info("No completed books recorded.")
+
 
 
 # --- MANAGE TAB ---

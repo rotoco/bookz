@@ -6,7 +6,7 @@ def get_connection():
 def init_db():
     conn = get_connection()
 
-    # --- Books table ---
+    # --- Books Table ---
     conn.execute("""
         CREATE TABLE IF NOT EXISTS books (
             id INTEGER PRIMARY KEY,
@@ -19,20 +19,23 @@ def init_db():
         )
     """)
 
-    # --- Reviews table ---
+    # --- Reviews Table ---
     conn.execute("""
         CREATE TABLE IF NOT EXISTS reviews (
             id INTEGER PRIMARY KEY,
             book_id INTEGER,
-            rating INTEGER,
+            form INTEGER,
+            function INTEGER,
             comment TEXT,
             FOREIGN KEY (book_id) REFERENCES books(id)
         )
     """)
 
-    # --- Migration: add isbn if missing ---
-    cols = [row[1] for row in conn.execute("PRAGMA table_info(books)").fetchall()]
-    if "isbn" not in cols:
-        conn.execute("ALTER TABLE books ADD COLUMN isbn TEXT")
+    # Migration: add new columns if missing
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(reviews)").fetchall()]
+    if "form" not in cols:
+        conn.execute("ALTER TABLE reviews ADD COLUMN form INTEGER")
+    if "function" not in cols:
+        conn.execute("ALTER TABLE reviews ADD COLUMN function INTEGER")
 
     conn.close()
