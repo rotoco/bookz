@@ -2,3 +2,6 @@ streamlit==1.30.0
 duckdb==1.3.2
 pandas==2.2.3
 plotly==5.22.0
+altair
+requests
+streamlit-authenticator
