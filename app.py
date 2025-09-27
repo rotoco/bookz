@@ -1,58 +1,42 @@
-import os
-os.environ["STREAMLIT_WATCHER_TYPE"] = "poll"  # 🔧 Fix for Streamlit Cloud watcher error
-
 import streamlit as st
 import duckdb
 import pandas as pd
 import requests
 import altair as alt
-import streamlit_authenticator as stauth
 from concurrent.futures import ThreadPoolExecutor
+import streamlit_authenticator as stauth
 from db import get_connection, init_db
 
 st.set_page_config(page_title="📚🛢️ bookz", layout="wide")
 
-# ---------------------------------------------------------------------
-# 🔑 Authentication Setup (streamlit-authenticator 0.3.3+)
-# ---------------------------------------------------------------------
-credentials = {
-    "usernames": {
-        "alice": {
-            "name": "Alice Smith",
-            "password": stauth.Hasher(["abc123"]).generate()[0],
-        },
-        "bob": {
-            "name": "Bob Jones",
-            "password": stauth.Hasher(["def456"]).generate()[0],
-        },
-    }
-}
+# --- Init database ---
+init_db()
 
+# --- Authentication setup ---
+# ⚠️ Make sure these are set in .streamlit/secrets.toml on Streamlit Cloud
+credentials = {
+    "usernames": st.secrets["credentials"]["usernames"]
+}
+cookie_config = {
+    "name": st.secrets["cookie"]["name"],
+    "key": st.secrets["cookie"]["key"],
+    "expiry_days": st.secrets["cookie"]["expiry_days"],
+}
 authenticator = stauth.Authenticate(
     credentials,
-    "bookz_cookie",      # cookie name
-    "abcdef",            # signature key
-    cookie_expiry_days=30,
+    cookie_config["name"],
+    cookie_config["key"],
+    cookie_config["expiry_days"]
 )
 
-# --- Authentication ---
-name, authentication_status, username = authenticator.login(location='main')
+name, authentication_status, username = authenticator.login("Login", "main")
 
-if authentication_status is False:
-    st.error("❌ Username/password is incorrect")
-elif authentication_status is None:
-    st.warning("Please enter your username and password")
-else:
-    st.success(f"Welcome {name} 👋")
+# --- Authenticated User Content ---
+if authentication_status:
+    st.sidebar.success(f"Welcome {name} 👋")
+    authenticator.logout("Logout", "sidebar")
 
-    # -----------------------------------------------------------------
-    # Database
-    # -----------------------------------------------------------------
-    init_db()
-
-    st.title("📚🛢️ bookz")
-
-    # Utility: fetch author name by key
+    # --- Utility functions ---
     def fetch_author_name(author_key):
         try:
             ar = requests.get(f"https://openlibrary.org{author_key}.json")
@@ -62,7 +46,6 @@ else:
             return None
         return None
 
-    # Utility: fetch book details by ISBN
     def fetch_book_details(isbn):
         url = f"https://openlibrary.org/isbn/{isbn}.json"
         try:
@@ -87,15 +70,13 @@ else:
             return {
                 "title": data.get("title", "Unknown Title"),
                 "author": ", ".join(authors) if authors else "Unknown Author",
-                "cover_url": f"https://covers.openlibrary.org/b/isbn/{isbn}-M.jpg",
+                "cover_url": f"https://covers.openlibrary.org/b/isbn/{isbn}-M.jpg"
             }
         except Exception as e:
             st.error(f"Error fetching ISBN data: {e}")
             return None
 
-    # -----------------------------------------------------------------
-    # Tabs (only visible after login)
-    # -----------------------------------------------------------------
+    # Tabs for Books, Reviews, Manage
     tab1, tab2, tab3 = st.tabs(["📖 bookz", "⭐ reviewz", "⚙️ manage"])
 
     # --- BOOKS TAB ---
@@ -119,7 +100,6 @@ else:
             else:
                 st.warning("⚠️ No details found for that ISBN.")
 
-        # Form for adding book
         with st.form("add_book", clear_on_submit=True):
             title = st.text_input("Title", value=default_title)
             author = st.text_input("Author", value=default_author)
@@ -189,13 +169,12 @@ else:
         # --- All Books Table ---
         st.subheader("📚 All Books")
         conn = get_connection()
-        df_books = conn.execute("SELECT * FROM books").fetchdf()
-        conn.close()
-
-        if not df_books.empty:
+        try:
+            df_books = conn.execute("SELECT * FROM books").fetchdf()
             st.dataframe(df_books, use_container_width=True)
-        else:
+        except Exception:
             st.info("No books in your collection yet.")
+        conn.close()
 
     # --- REVIEWS TAB ---
     with tab2:
@@ -222,13 +201,16 @@ else:
 
         st.subheader("All Reviews")
         conn = get_connection()
-        df_reviews = conn.execute("""
-            SELECT r.id, b.title, r.rating, r.comment
-            FROM reviews r
-            JOIN books b ON r.book_id = b.id
-        """).fetchdf()
+        try:
+            df_reviews = conn.execute("""
+                SELECT r.id, b.title, r.rating, r.comment
+                FROM reviews r
+                JOIN books b ON r.book_id = b.id
+            """).fetchdf()
+            st.dataframe(df_reviews, use_container_width=True)
+        except Exception:
+            st.info("No reviews yet.")
         conn.close()
-        st.dataframe(df_reviews, use_container_width=True)
 
         # --- Books Read by Year Chart ---
         st.subheader("📊 Books Read by Year")
@@ -270,7 +252,6 @@ else:
     # --- MANAGE TAB ---
     with tab3:
         st.header("⚙️ Manage Books")
-
         conn = get_connection()
         df_books = conn.execute("SELECT * FROM books").fetchdf()
         conn.close()
@@ -284,7 +265,6 @@ else:
 
             if book_choice:
                 book_id = book_choice["id"]
-
                 formats = ["NA", "Audiobook", "Hardcover", "Paperback", "pdf"]
                 current_format = book_choice["format"] if book_choice["format"] in formats else "NA"
                 new_format = st.selectbox(
@@ -331,14 +311,12 @@ else:
                     conn.close()
                     st.warning(f"Deleted '{book_choice['title']}'")
                     st.experimental_rerun()
-
         else:
             st.info("No books in your collection yet.")
 
         st.subheader("⚠️ Danger Zone")
         with st.expander("Delete ALL Books"):
             st.warning("This will remove ALL books and reviews from your library. This cannot be undone!")
-
             confirm = st.checkbox("Yes, I understand. Delete everything.", key="confirm_delete_all")
             if st.button("🗑️ Delete ALL Books", key="delete_all") and confirm:
                 conn = get_connection()
@@ -347,3 +325,9 @@ else:
                 conn.close()
                 st.success("✅ All books and reviews have been deleted.")
                 st.experimental_rerun()
+
+# --- If not logged in ---
+elif authentication_status is False:
+    st.error("Username/password is incorrect")
+elif authentication_status is None:
+    st.warning("Please enter your username and password")
