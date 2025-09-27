@@ -1,3 +1,6 @@
+import os
+os.environ["STREAMLIT_WATCHER_TYPE"] = "poll"  # 🔧 Fix for Streamlit Cloud watcher error
+
 import streamlit as st
 import duckdb
 import pandas as pd
@@ -7,42 +10,41 @@ import streamlit_authenticator as stauth
 from concurrent.futures import ThreadPoolExecutor
 from db import get_connection, init_db
 
-# --- Authentication setup ---
-names = ["Alice Example", "Bob Example"]
-usernames = ["alice", "bob"]
-passwords = ["abc123", "def456"]
+st.set_page_config(page_title="📚🛢️ bookz", layout="wide")
 
-# Hash passwords
-hashed_passwords = stauth.Hasher(passwords).generate()
-
+# ---------------------------------------------------------------------
+# 🔑 Authentication Setup (streamlit-authenticator 0.3.3+)
+# ---------------------------------------------------------------------
 credentials = {
     "usernames": {
-        usernames[i]: {
-            "name": names[i],
-            "password": hashed_passwords[i]
-        }
-        for i in range(len(usernames))
+        "alice": {
+            "name": "Alice Smith",
+            "password": stauth.Hasher(["abc123"]).generate()[0],
+        },
+        "bob": {
+            "name": "Bob Jones",
+            "password": stauth.Hasher(["def456"]).generate()[0],
+        },
     }
 }
 
 authenticator = stauth.Authenticate(
     credentials,
-    cookie_name="bookz_cookie",
-    key="abcdef",
-    cookie_expiry_days=30
+    "bookz_cookie",      # cookie name
+    "abcdef",            # signature key
+    cookie_expiry_days=30,
 )
 
-# --- LOGIN ---
-# Use a single line, valid location string: "main", "sidebar", or "unrendered"
 name, authentication_status, username = authenticator.login("Login", "main")
 
-# Handle authentication outcomes
 if authentication_status is False:
     st.error("❌ Username/password is incorrect")
 elif authentication_status is None:
-    st.warning("⚠️ Please enter your username and password")
+    st.warning("👆 Please enter your username and password")
 else:
-    st.success(f"Welcome {name}!")
+    # Logged in
+    authenticator.logout("Logout", "sidebar")
+    st.sidebar.success(f"Welcome, {name}! 👋")
 
     # -----------------------------------------------------------------
     # Database
