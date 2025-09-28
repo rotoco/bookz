@@ -17,7 +17,7 @@ credentials = st.secrets["credentials"]
 authenticator = stauth.Authenticate(
     credentials,
     cookie_name="bookz_cookie",
-    # key="random_signature_key",  # ⚠️ replace with secure secret in production
+    cookie_key="random_signature_key",  # ⚠️ replace with secure secret in production
     cookie_expiry_days=30
 )
 
