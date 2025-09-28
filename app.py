@@ -11,7 +11,6 @@ from db import get_connection, init_db
 st.set_page_config(page_title="📚🛢️ bookz", layout="wide")
 
 # ---------------- AUTHENTICATION ----------------
-
 # Load credentials from secrets.toml
 auth_secrets = st.secrets["auth"]
 
@@ -24,7 +23,7 @@ credentials = {
     }
 }
 
-# Authenticator (v0.11+)
+# Initialize authenticator
 authenticator = stauth.Authenticate(
     credentials=credentials,
     cookie_name="bookz_cookie",
@@ -32,9 +31,13 @@ authenticator = stauth.Authenticate(
     cookie_expiry_days=30
 )
 
-# Login screen (location must be one of "main", "sidebar", "unrendered")
-name, authentication_status, username = authenticator.login("Login", location="main")
+# Login screen (v0.11+ requires keyword argument for location)
+name, authentication_status, username = authenticator.login(
+    name="Login",        # The title of the login form
+    location="main"      # Must be one of: "main", "sidebar", "unrendered"
+)
 
+# Handle authentication results
 if authentication_status is False:
     st.error("❌ Username/password is incorrect")
 elif authentication_status is None:
