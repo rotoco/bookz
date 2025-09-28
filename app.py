@@ -3,40 +3,41 @@ import duckdb
 import pandas as pd
 import requests
 import altair as alt
+import copy
+from db import get_connection, init_db
 from concurrent.futures import ThreadPoolExecutor
 import streamlit_authenticator as stauth
-from db import get_connection, init_db
 
 st.set_page_config(page_title="📚🛢️ bookz", layout="wide")
 
-# --- Init database ---
-init_db()
+# --- Load credentials from .streamlit/secrets.toml ---
+credentials = st.secrets["credentials"]
 
-# --- Authentication setup ---
-# ⚠️ Make sure these are set in .streamlit/secrets.toml on Streamlit Cloud
-credentials = {
-    "usernames": st.secrets["credentials"]["usernames"]
-}
-cookie_config = {
-    "name": st.secrets["cookie"]["name"],
-    "key": st.secrets["cookie"]["key"],
-    "expiry_days": st.secrets["cookie"]["expiry_days"],
-}
+# Initialize authenticator
 authenticator = stauth.Authenticate(
     credentials,
-    cookie_config["name"],
-    cookie_config["key"],
-    cookie_config["expiry_days"]
+    cookie_name="bookz_cookie",
+    key="random_signature_key",  # ⚠️ replace with secure secret in production
+    cookie_expiry_days=30
 )
 
-name, authentication_status, username = authenticator.login("Login", "main")
+# Login widget
+name, authentication_status, username = authenticator.login("main")
 
-# --- Authenticated User Content ---
-if authentication_status:
-    st.sidebar.success(f"Welcome {name} 👋")
+# Ensure DB is ready
+init_db()
+
+if authentication_status is False:
+    st.error("Username/password is incorrect")
+elif authentication_status is None:
+    st.warning("Please enter your username and password")
+elif authentication_status:
+    # Show logout
     authenticator.logout("Logout", "sidebar")
 
-    # --- Utility functions ---
+    st.title(f"📚🛢️ bookz — Welcome {name}!")
+
+    # --- Utility: fetch author name by key ---
     def fetch_author_name(author_key):
         try:
             ar = requests.get(f"https://openlibrary.org{author_key}.json")
@@ -46,6 +47,7 @@ if authentication_status:
             return None
         return None
 
+    # --- Utility: fetch book details by ISBN ---
     def fetch_book_details(isbn):
         url = f"https://openlibrary.org/isbn/{isbn}.json"
         try:
@@ -53,8 +55,6 @@ if authentication_status:
             if r.status_code != 200:
                 return None
             data = r.json()
-
-            # Fetch authors in parallel
             authors = []
             with ThreadPoolExecutor() as executor:
                 futures = []
@@ -76,7 +76,7 @@ if authentication_status:
             st.error(f"Error fetching ISBN data: {e}")
             return None
 
-    # Tabs for Books, Reviews, Manage
+    # Tabs
     tab1, tab2, tab3 = st.tabs(["📖 bookz", "⭐ reviewz", "⚙️ manage"])
 
     # --- BOOKS TAB ---
@@ -84,10 +84,7 @@ if authentication_status:
         st.header("Add a new book")
 
         isbn = st.text_input("ISBN (optional, press Enter to fetch details)")
-
-        default_title = ""
-        default_author = ""
-        default_cover = None
+        default_title, default_author, default_cover = "", "", None
 
         if isbn:
             details = fetch_book_details(isbn)
@@ -103,15 +100,13 @@ if authentication_status:
         with st.form("add_book", clear_on_submit=True):
             title = st.text_input("Title", value=default_title)
             author = st.text_input("Author", value=default_author)
-
             book_format = st.selectbox(
                 "Format",
                 ["NA", "Audiobook", "Hardcover", "Paperback", "pdf"],
                 index=0
             )
-
-            start_date = st.date_input("Start Date (optional)", value=None, key="start_date")
-            end_date = st.date_input("End Date (optional)", value=None, key="end_date")
+            start_date = st.date_input("Start Date (optional)", value=None)
+            end_date = st.date_input("End Date (optional)", value=None)
 
             submitted = st.form_submit_button("Add Book")
             if submitted and title and author:
@@ -124,7 +119,7 @@ if authentication_status:
                 conn.close()
                 st.success(f"Book '{title}' added!")
 
-        # --- Bulk Import CSV ---
+        # Bulk Import
         st.subheader("📥 Bulk Import Books (CSV)")
         uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
         if uploaded_file is not None:
@@ -133,7 +128,6 @@ if authentication_status:
                     df = pd.read_csv(uploaded_file)
                 except UnicodeDecodeError:
                     df = pd.read_csv(uploaded_file, encoding="latin1")
-
                 df.columns = [c.strip().lower() for c in df.columns]
                 required = {"title", "author"}
                 if not required.issubset(set(df.columns)):
@@ -142,13 +136,8 @@ if authentication_status:
                     conn = get_connection()
                     for _, row in df.iterrows():
                         next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM books").fetchone()[0]
-                        start_date = None
-                        end_date = None
-                        if "start_date" in df.columns and pd.notna(row.get("start_date")):
-                            start_date = pd.to_datetime(row["start_date"], errors="coerce")
-                        if "end_date" in df.columns and pd.notna(row.get("end_date")):
-                            end_date = pd.to_datetime(row["end_date"], errors="coerce")
-
+                        start_date = pd.to_datetime(row.get("start_date"), errors="coerce") if "start_date" in df.columns else None
+                        end_date = pd.to_datetime(row.get("end_date"), errors="coerce") if "end_date" in df.columns else None
                         conn.execute(
                             "INSERT INTO books (id, title, author, format, start_date, end_date, isbn) VALUES (?, ?, ?, ?, ?, ?, ?)",
                             [
@@ -166,15 +155,15 @@ if authentication_status:
             except Exception as e:
                 st.error(f"Error importing CSV: {e}")
 
-        # --- All Books Table ---
+        # All Books Table
         st.subheader("📚 All Books")
         conn = get_connection()
-        try:
-            df_books = conn.execute("SELECT * FROM books").fetchdf()
-            st.dataframe(df_books, use_container_width=True)
-        except Exception:
-            st.info("No books in your collection yet.")
+        df_books = conn.execute("SELECT * FROM books").fetchdf()
         conn.close()
+        if not df_books.empty:
+            st.dataframe(df_books, use_container_width=True)
+        else:
+            st.info("No books in your collection yet.")
 
     # --- REVIEWS TAB ---
     with tab2:
@@ -186,68 +175,36 @@ if authentication_status:
         if books:
             with st.form("add_review", clear_on_submit=True):
                 book_choice = st.selectbox("Book", books, format_func=lambda b: f"{b[1]} (id={b[0]})")
-                rating = st.slider("Rating", 1, 5, 3)
+
+                # Two sliders (-10 to 10)
+                form_score = st.slider("Form", -10, 10, 0)
+                function_score = st.slider("Function", -10, 10, 0)
+
                 comment = st.text_area("Comment")
+
                 submitted = st.form_submit_button("Add Review")
                 if submitted:
                     conn = get_connection()
                     next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM reviews").fetchone()[0]
                     conn.execute(
-                        "INSERT INTO reviews (id, book_id, rating, comment) VALUES (?, ?, ?, ?)",
-                        [next_id, book_choice[0], rating, comment]
+                        "INSERT INTO reviews (id, book_id, form, function, comment) VALUES (?, ?, ?, ?, ?)",
+                        [next_id, book_choice[0], form_score, function_score, comment]
                     )
                     conn.close()
                     st.success("Review added!")
 
         st.subheader("All Reviews")
         conn = get_connection()
-        try:
-            df_reviews = conn.execute("""
-                SELECT r.id, b.title, r.rating, r.comment
-                FROM reviews r
-                JOIN books b ON r.book_id = b.id
-            """).fetchdf()
+        df_reviews = conn.execute("""
+            SELECT r.id, b.title, r.form, r.function, r.comment
+            FROM reviews r
+            JOIN books b ON r.book_id = b.id
+        """).fetchdf()
+        conn.close()
+        if not df_reviews.empty:
             st.dataframe(df_reviews, use_container_width=True)
-        except Exception:
-            st.info("No reviews yet.")
-        conn.close()
-
-        # --- Books Read by Year Chart ---
-        st.subheader("📊 Books Read by Year")
-        conn = get_connection()
-        df_books = conn.execute("SELECT title, end_date FROM books WHERE end_date IS NOT NULL").fetchdf()
-        conn.close()
-
-        if not df_books.empty:
-            df_books["end_date"] = pd.to_datetime(df_books["end_date"], errors="coerce")
-            df_books = df_books.dropna(subset=["end_date"])
-
-            years = sorted(df_books["end_date"].dt.year.unique(), reverse=True)
-            selected_year = st.selectbox("Select year", years, index=0)
-
-            df_year = df_books[df_books["end_date"].dt.year == selected_year]
-            if not df_year.empty:
-                df_year["month"] = df_year["end_date"].dt.strftime("%B")
-                month_order = [
-                    "January", "February", "March", "April", "May", "June",
-                    "July", "August", "September", "October", "November", "December"
-                ]
-
-                chart = (
-                    alt.Chart(df_year)
-                    .mark_bar()
-                    .encode(
-                        x=alt.X("month:N", sort=month_order, title="Month"),
-                        y=alt.Y("count():Q", title="Books Completed"),
-                        tooltip=["count()", "month"]
-                    )
-                    .properties(width=600, height=400, title=f"Books Completed in {selected_year}")
-                )
-                st.altair_chart(chart, use_container_width=True)
-            else:
-                st.info(f"No books completed in {selected_year}.")
         else:
-            st.info("No completed books recorded.")
+            st.info("No reviews yet.")
 
     # --- MANAGE TAB ---
     with tab3:
@@ -262,49 +219,28 @@ if authentication_status:
                 df_books.to_dict("records"),
                 format_func=lambda b: f"{b['title']} by {b['author']}" if b else "Select...",
             )
-
             if book_choice:
                 book_id = book_choice["id"]
                 formats = ["NA", "Audiobook", "Hardcover", "Paperback", "pdf"]
                 current_format = book_choice["format"] if book_choice["format"] in formats else "NA"
-                new_format = st.selectbox(
-                    "Format",
-                    formats,
-                    index=formats.index(current_format),
-                    key=f"format_{book_id}"
-                )
+                new_format = st.selectbox("Format", formats, index=formats.index(current_format))
+                new_start = st.date_input("Start Date",
+                    value=None if pd.isna(book_choice["start_date"]) else pd.to_datetime(book_choice["start_date"]).date())
+                new_end = st.date_input("End Date",
+                    value=None if pd.isna(book_choice["end_date"]) else pd.to_datetime(book_choice["end_date"]).date())
+                new_isbn = st.text_input("ISBN",
+                    value="" if pd.isna(book_choice["isbn"]) else book_choice["isbn"])
 
-                new_start = st.date_input(
-                    "Start Date",
-                    value=None if pd.isna(book_choice["start_date"]) else pd.to_datetime(book_choice["start_date"]).date(),
-                    key=f"start_{book_id}"
-                )
-                new_end = st.date_input(
-                    "End Date",
-                    value=None if pd.isna(book_choice["end_date"]) else pd.to_datetime(book_choice["end_date"]).date(),
-                    key=f"end_{book_id}"
-                )
-
-                new_isbn = st.text_input(
-                    "ISBN",
-                    value="" if pd.isna(book_choice["isbn"]) else book_choice["isbn"],
-                    key=f"isbn_{book_id}"
-                )
-
-                if st.button("💾 Save Changes", key=f"save_{book_id}"):
+                if st.button("💾 Save Changes"):
                     conn = get_connection()
                     conn.execute(
-                        """
-                        UPDATE books
-                        SET format=?, start_date=?, end_date=?, isbn=?
-                        WHERE id=?
-                        """,
+                        "UPDATE books SET format=?, start_date=?, end_date=?, isbn=? WHERE id=?",
                         [new_format, new_start, new_end, new_isbn, book_id],
                     )
                     conn.close()
                     st.success(f"Updated '{book_choice['title']}'")
 
-                if st.button("🗑️ Delete Book", key=f"delete_{book_id}"):
+                if st.button("🗑️ Delete Book"):
                     conn = get_connection()
                     conn.execute("DELETE FROM reviews WHERE book_id=?", [book_id])
                     conn.execute("DELETE FROM books WHERE id=?", [book_id])
@@ -316,18 +252,12 @@ if authentication_status:
 
         st.subheader("⚠️ Danger Zone")
         with st.expander("Delete ALL Books"):
-            st.warning("This will remove ALL books and reviews from your library. This cannot be undone!")
-            confirm = st.checkbox("Yes, I understand. Delete everything.", key="confirm_delete_all")
-            if st.button("🗑️ Delete ALL Books", key="delete_all") and confirm:
+            st.warning("This will remove ALL books and reviews. Cannot be undone!")
+            confirm = st.checkbox("Yes, I understand. Delete everything.")
+            if st.button("🗑️ Delete ALL Books") and confirm:
                 conn = get_connection()
                 conn.execute("DELETE FROM reviews")
                 conn.execute("DELETE FROM books")
                 conn.close()
-                st.success("✅ All books and reviews have been deleted.")
+                st.success("✅ All books and reviews deleted.")
                 st.experimental_rerun()
-
-# --- If not logged in ---
-elif authentication_status is False:
-    st.error("Username/password is incorrect")
-elif authentication_status is None:
-    st.warning("Please enter your username and password")
