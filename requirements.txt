@@ -4,4 +4,4 @@ duckdb>=1.3.2
 pandas>=2.2.3
 altair>=5.0.1
 requests>=2.31.0
-streamlit-authenticator>=0.11.0
+streamlit-authenticator==0.4.2
