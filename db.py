@@ -15,7 +15,8 @@ def init_db():
             format TEXT,
             start_date DATE,
             end_date DATE,
-            isbn TEXT
+            isbn TEXT,
+            username TEXT
         )
     """)
 
@@ -27,15 +28,24 @@ def init_db():
             form INTEGER,
             function INTEGER,
             comment TEXT,
+            username TEXT,
             FOREIGN KEY (book_id) REFERENCES books(id)
         )
     """)
 
-    # Migration: add new columns if missing
-    cols = [row[1] for row in conn.execute("PRAGMA table_info(reviews)").fetchall()]
-    if "form" not in cols:
+    # --- Migration: Add username column if missing ---
+    books_cols = [row[1] for row in conn.execute("PRAGMA table_info(books)").fetchall()]
+    if "username" not in books_cols:
+        conn.execute("ALTER TABLE books ADD COLUMN username TEXT")
+
+    reviews_cols = [row[1] for row in conn.execute("PRAGMA table_info(reviews)").fetchall()]
+    if "username" not in reviews_cols:
+        conn.execute("ALTER TABLE reviews ADD COLUMN username TEXT")
+
+    # --- Migration: Add form/function columns if missing (defensive check) ---
+    if "form" not in reviews_cols:
         conn.execute("ALTER TABLE reviews ADD COLUMN form INTEGER")
-    if "function" not in cols:
+    if "function" not in reviews_cols:
         conn.execute("ALTER TABLE reviews ADD COLUMN function INTEGER")
 
     conn.close()
