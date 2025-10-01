@@ -29,7 +29,7 @@ authenticator = stauth.Authenticate(
 )
 
 # Render login in sidebar
-name, authentication_status, username = authenticator.login("Login", "sidebar")
+name, authentication_status, username = authenticator.login(location="sidebar")
 
 if authentication_status:
     st.sidebar.success(f"Welcome {name}")
