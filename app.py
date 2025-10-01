@@ -22,6 +22,7 @@ config = {
         "usernames": {
             "alice": {"name": "Alice Smith", "password": "abc123"},
             "bob": {"name": "Bob Jones", "password": "def456"},
+            "roto": {"name": "roto", "password": "chapter4"},
         }
     },
     "cookie": {
