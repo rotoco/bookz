@@ -21,6 +21,7 @@ config = {
             "alice": {"name": "Alice Smith", "password": "abc123"},
             "bob": {"name": "Bob Jones", "password": "def456"},
             "roto": {"name": "roto", "password": "chapter4"},
+            "harlanb": {"name": "harlan bishop", "password": "nancy123" }
         }
     },
     "cookie": {
