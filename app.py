@@ -177,7 +177,7 @@ if st.session_state["authentication_status"]:
         # All Books
         st.subheader("📚 All Books")
         conn = get_connection()
-        df_books = conn.execute("SELECT * FROM books WHERE username = ?", [st.session_state["username"]]).fetchdf()
+        df_books = conn.execute("SELECT title, author, format, start_date AS 'start date', end_date AS 'end date', isbn FROM books WHERE username = ?", [st.session_state["username"]]).fetchdf()
         conn.close()
         if not df_books.empty:
             st.dataframe(df_books, use_container_width=True)
