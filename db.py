@@ -1,51 +1,51 @@
 import duckdb
+import os
+import streamlit as st
 
 def get_connection():
-    return duckdb.connect(database="bookz.duckdb", read_only=False)
+    token = None
+
+    # Try Streamlit secrets first (for deployment)
+    if "motherduck_token" in st.secrets:
+        token = st.secrets["motherduck_token"]
+    else:
+        # Fallback for local development
+        token = os.getenv("MOTHERDUCK_TOKEN")
+
+    return duckdb.connect(
+        "md:bookz",
+        config={
+            "motherduck_token": token
+        }
+    )
 
 def init_db():
     conn = get_connection()
 
-    # --- Books Table ---
     conn.execute("""
         CREATE TABLE IF NOT EXISTS books (
-            id INTEGER PRIMARY KEY,
-            title TEXT,
-            author TEXT,
+            id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+            title TEXT NOT NULL,
+            author TEXT NOT NULL,
             format TEXT,
             start_date DATE,
             end_date DATE,
             isbn TEXT,
-            username TEXT
+            username TEXT NOT NULL,
+            UNIQUE(title, author, username)
         )
     """)
 
-    # --- Reviews Table ---
     conn.execute("""
         CREATE TABLE IF NOT EXISTS reviews (
-            id INTEGER PRIMARY KEY,
-            book_id INTEGER,
+            id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+            book_id BIGINT NOT NULL,
             form INTEGER,
             function INTEGER,
             comment TEXT,
-            username TEXT,
+            username TEXT NOT NULL,
             FOREIGN KEY (book_id) REFERENCES books(id)
         )
     """)
-
-    # --- Migration: Add username column if missing ---
-    books_cols = [row[1] for row in conn.execute("PRAGMA table_info(books)").fetchall()]
-    if "username" not in books_cols:
-        conn.execute("ALTER TABLE books ADD COLUMN username TEXT")
-
-    reviews_cols = [row[1] for row in conn.execute("PRAGMA table_info(reviews)").fetchall()]
-    if "username" not in reviews_cols:
-        conn.execute("ALTER TABLE reviews ADD COLUMN username TEXT")
-
-    # --- Migration: Add form/function columns if missing (defensive check) ---
-    if "form" not in reviews_cols:
-        conn.execute("ALTER TABLE reviews ADD COLUMN form INTEGER")
-    if "function" not in reviews_cols:
-        conn.execute("ALTER TABLE reviews ADD COLUMN function INTEGER")
 
     conn.close()
