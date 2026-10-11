@@ -9,7 +9,7 @@ import streamlit_authenticator as stauth
 from db import get_connection, init_db
 
 # --- App Config ---
-st.set_page_config(page_title="📚🛢️ bookz", page_icon="books-app-icon.png" layout="wide")
+st.set_page_config(page_title="📚🛢️ bookz", page_icon="books-app-icon.png", layout="wide")
 
 # --- DB Init ---
 init_db()
