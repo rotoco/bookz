@@ -3,6 +3,11 @@ import streamlit as st
 import os
 
 # ------------------------------
+# Constants
+# ------------------------------
+STATUSES = ["wishlist", "not_started", "reading", "completed", "abandoned"]
+
+# ------------------------------
 # Connection
 # ------------------------------
 def get_connection():
@@ -11,7 +16,6 @@ def get_connection():
     """
     token = st.secrets.get("motherduck_token") or os.getenv("MOTHERDUCK_TOKEN")
     return duckdb.connect("md:bookz", config={"motherduck_token": token})
-
 
 # ------------------------------
 # Initialize DB
@@ -43,6 +47,7 @@ def init_db():
             function INTEGER,
             comment TEXT,
             username TEXT NOT NULL,
+            status TEXT,
             FOREIGN KEY (book_id) REFERENCES books(id)
         )
     """)
@@ -82,3 +87,22 @@ def insert_review(conn, book_id, username, form=None, function=None, comment=Non
     """, [next_id, book_id, username, form, function, comment])
 
     return next_id
+
+def infer_status(start_date, end_date) -> str:
+    """Same rules as the one-time backfill; used for CSV rows with no status."""
+    if end_date is not None:
+        return "completed"
+    if start_date is not None:
+        return "reading"
+    return "not_started"
+
+
+def date_error(status: str, start_date, end_date) -> str | None:
+    """Return a message if the dates don't fit the status, else None."""
+    if status in ("wishlist", "not_started") and (start_date or end_date):
+        return f"'{status}' books shouldn't have dates."
+    if status == "reading" and end_date:
+        return "A book you're still reading shouldn't have an end date."
+    if status in ("completed", "abandoned") and not end_date:
+        return f"'{status}' books need an end date."
+    return None
