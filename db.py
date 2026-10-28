@@ -1,27 +1,52 @@
+import os
+
 import duckdb
 import streamlit as st
-import os
 
 # ------------------------------
 # Constants
 # ------------------------------
 STATUSES = ["wishlist", "not_started", "reading", "completed", "abandoned"]
 
+
 # ------------------------------
 # Connection
 # ------------------------------
-def get_connection():
+@st.cache_resource
+def _shared_connection() -> duckdb.DuckDBPyConnection:
     """
-    Connect to MotherDuck (cloud) or local dev via env variable.
+    One MotherDuck connection per server process, created and initialized once.
+    Streamlit serializes concurrent first calls, so sessions can't race on DDL.
     """
     token = st.secrets.get("motherduck_token") or os.getenv("MOTHERDUCK_TOKEN")
-    return duckdb.connect("md:bookz", config={"motherduck_token": token})
+    conn = duckdb.connect("md:bookz", config={"motherduck_token": token})
+    _create_tables(conn)
+    return conn
+
+
+def get_connection() -> duckdb.DuckDBPyConnection:
+    """
+    Returns a per-call cursor on the shared connection.
+    Safe to close(); that only closes the cursor, not the shared connection.
+    """
+    return _shared_connection().cursor()
+
 
 # ------------------------------
 # Initialize DB
 # ------------------------------
-def init_db():
-    conn = get_connection()
+def _create_tables(conn: duckdb.DuckDBPyConnection) -> None:
+    # Skip DDL entirely when the schema already exists, so normal
+    # startups never open a catalog-altering transaction.
+    existing = {
+        row[0]
+        for row in conn.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_name IN ('books', 'reviews')"
+        ).fetchall()
+    }
+    if existing == {"books", "reviews"}:
+        return
 
     # Books table
     conn.execute("""
@@ -52,7 +77,10 @@ def init_db():
         )
     """)
 
-    conn.close()
+
+def init_db() -> None:
+    """Kept so app.py's existing init_db() call still works; runs init once per process."""
+    _shared_connection()
 
 
 # ------------------------------
@@ -87,6 +115,7 @@ def insert_review(conn, book_id, username, form=None, function=None, comment=Non
     """, [next_id, book_id, username, form, function, comment])
 
     return next_id
+
 
 def infer_status(start_date, end_date) -> str:
     """Same rules as the one-time backfill; used for CSV rows with no status."""
