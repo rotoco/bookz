@@ -281,14 +281,16 @@ with tab1:
     conn.close()
 
     if not df_all_books.empty:
-        status_filter = st.selectbox(
+        status_filter = st.multiselect(
             "Filter by status",
-            ["all"] + STATUSES,
-            format_func=lambda s: "all" if s == "all" else status_label(s),
+            STATUSES,
+            default=[],  # empty = show all statuses
+            format_func=status_label,
+            placeholder="All statuses",
             key="all_books_status_filter",
         )
-        if status_filter != "all":
-            df_all_books = df_all_books[df_all_books["status"] == status_filter]
+        if status_filter:
+            df_all_books = df_all_books[df_all_books["status"].isin(status_filter)]
         df_all_books = df_all_books.assign(status=df_all_books["status"].map(status_label))
 
         if df_all_books.empty:
