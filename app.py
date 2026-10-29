@@ -5,7 +5,16 @@ import altair as alt
 from concurrent.futures import ThreadPoolExecutor
 import streamlit_authenticator as stauth
 
-from db import get_connection, init_db
+from db import (
+    STATUSES,
+    STATUS_LABELS,
+    date_error,
+    get_connection,
+    infer_status,
+    init_db,
+    insert_book,
+    insert_review,
+)
 
 # --- App Config ---
 st.set_page_config(page_title="📚🛢️ bookz", page_icon="books-app-icon.png", layout="wide")
@@ -66,6 +75,18 @@ def show_flash():
     if item:
         kind, message = item
         getattr(st, kind)(message)
+
+
+def status_label(status):
+    return STATUS_LABELS.get(status, status)
+
+
+def csv_date(value):
+    """Parse a CSV cell into a date, or None."""
+    if value is None or pd.isna(value):
+        return None
+    parsed = pd.to_datetime(value, errors="coerce")
+    return None if pd.isna(parsed) else parsed.date()
 
 
 # Utility: fetch author name by key
@@ -141,22 +162,42 @@ with tab1:
         title = st.text_input("Title", value=default_title)
         author = st.text_input("Author", value=default_author)
         book_format = st.selectbox("Format", FORMATS)
+        book_status = st.selectbox(
+            "Status",
+            STATUSES,
+            index=STATUSES.index("not_started"),
+            format_func=status_label,
+        )
         start_date = st.date_input("Start Date (optional)", value=None, key="start_date")
         end_date = st.date_input("End Date (optional)", value=None, key="end_date")
         submitted = st.form_submit_button("Add Book")
 
         if submitted and title and author:
-            conn = get_connection()
-            next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM books").fetchone()[0]
-            conn.execute(
-                "INSERT INTO books (id, username, title, author, format, start_date, end_date, isbn) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                [next_id, username, title, author, book_format, start_date, end_date, isbn],
-            )
-            conn.close()
-            st.success(f"Book '{title}' added!")
+            problem = date_error(book_status, start_date, end_date)
+            if problem:
+                st.error(problem)
+            else:
+                conn = get_connection()
+                insert_book(
+                    conn,
+                    title,
+                    author,
+                    username,
+                    format=book_format,
+                    start_date=start_date,
+                    end_date=end_date,
+                    isbn=isbn,
+                    status=book_status,
+                )
+                conn.close()
+                st.success(f"Book '{title}' added as {status_label(book_status)}!")
 
     # Bulk Import CSV
     st.subheader("📥 Bulk Import Books (CSV)")
+    st.caption(
+        "Required columns: title, author. Optional: format, status, start_date, end_date, isbn. "
+        "Rows without a valid status get one inferred from the dates."
+    )
     uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
 
     # NOTE: the uploader keeps its file across reruns, so import only on an
@@ -175,31 +216,57 @@ with tab1:
                 st.error(f"CSV must include at least: {required}")
             else:
                 conn = get_connection()
-                for _, row in df.iterrows():
-                    next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM books").fetchone()[0]
+                imported = 0
+                skipped = []
 
-                    csv_start = None
-                    csv_end = None
-                    if "start_date" in df.columns and pd.notna(row.get("start_date")):
-                        csv_start = pd.to_datetime(row["start_date"], errors="coerce")
-                    if "end_date" in df.columns and pd.notna(row.get("end_date")):
-                        csv_end = pd.to_datetime(row["end_date"], errors="coerce")
+                for i, row in df.iterrows():
+                    row_title = row.get("title")
+                    row_author = row.get("author")
+                    if pd.isna(row_title) or pd.isna(row_author):
+                        skipped.append(f"row {i + 2}: missing title or author")
+                        continue
 
-                    conn.execute(
-                        "INSERT INTO books (id, username, title, author, format, start_date, end_date, isbn) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        [
-                            next_id,
-                            username,
-                            row.get("title"),
-                            row.get("author"),
-                            row.get("format", "NA"),
-                            csv_start.date() if csv_start is not None and pd.notna(csv_start) else None,
-                            csv_end.date() if csv_end is not None and pd.notna(csv_end) else None,
-                            row.get("isbn") if "isbn" in df.columns else None,
-                        ],
+                    csv_start = csv_date(row.get("start_date"))
+                    csv_end = csv_date(row.get("end_date"))
+
+                    raw_status = row.get("status")
+                    row_status = (
+                        str(raw_status).strip().lower().replace(" ", "_")
+                        if raw_status is not None and pd.notna(raw_status)
+                        else ""
                     )
+                    if row_status not in STATUSES:
+                        row_status = infer_status(csv_start, csv_end)
+
+                    problem = date_error(row_status, csv_start, csv_end)
+                    if problem:
+                        skipped.append(f"row {i + 2} ({row_title}): {problem}")
+                        continue
+
+                    row_format = row.get("format")
+                    if not isinstance(row_format, str) or row_format not in FORMATS:
+                        row_format = "NA"
+
+                    raw_isbn = row.get("isbn")
+                    row_isbn = None if raw_isbn is None or pd.isna(raw_isbn) else str(raw_isbn)
+
+                    insert_book(
+                        conn,
+                        row_title,
+                        row_author,
+                        username,
+                        format=row_format,
+                        start_date=csv_start,
+                        end_date=csv_end,
+                        isbn=row_isbn,
+                        status=row_status,
+                    )
+                    imported += 1
                 conn.close()
-                st.success("✅ CSV imported successfully!")
+
+                st.success(f"✅ Imported {imported} book(s).")
+                if skipped:
+                    st.warning(f"Skipped {len(skipped)} row(s):\n\n" + "\n".join(f"- {s}" for s in skipped))
         except Exception as e:
             st.error(f"Error importing CSV: {e}")
 
@@ -207,13 +274,27 @@ with tab1:
     st.subheader("📚 All Books")
     conn = get_connection()
     df_all_books = conn.execute(
-        "SELECT title, author, format, start_date AS 'start date', end_date AS 'end date', isbn FROM books WHERE username = ?",
+        "SELECT title, author, status, format, start_date AS 'start date', end_date AS 'end date', isbn "
+        "FROM books WHERE username = ?",
         [username],
     ).fetchdf()
     conn.close()
 
     if not df_all_books.empty:
-        st.dataframe(df_all_books, use_container_width=True)
+        status_filter = st.selectbox(
+            "Filter by status",
+            ["all"] + STATUSES,
+            format_func=lambda s: "all" if s == "all" else status_label(s),
+            key="all_books_status_filter",
+        )
+        if status_filter != "all":
+            df_all_books = df_all_books[df_all_books["status"] == status_filter]
+        df_all_books = df_all_books.assign(status=df_all_books["status"].map(status_label))
+
+        if df_all_books.empty:
+            st.info("No books with that status.")
+        else:
+            st.dataframe(df_all_books, hide_index=True, use_container_width=True)
     else:
         st.info("No books in your collection yet.")
 
@@ -221,9 +302,11 @@ with tab1:
 with tab2:
     st.header("Add a review")
 
+    # Completed or abandoned books are the ones with a finished story to review
     conn = get_connection()
     finished_books = conn.execute(
-        "SELECT id, title FROM books WHERE username = ? AND end_date IS NOT NULL", [username]
+        "SELECT id, title FROM books WHERE username = ? AND status IN ('completed', 'abandoned')",
+        [username],
     ).fetchall()
     conn.close()
 
@@ -237,13 +320,18 @@ with tab2:
 
             if review_submitted:
                 conn = get_connection()
-                next_id = conn.execute("SELECT COALESCE(MAX(id),0)+1 FROM reviews").fetchone()[0]
-                conn.execute(
-                    "INSERT INTO reviews (id, username, book_id, form, function, comment) VALUES (?, ?, ?, ?, ?, ?)",
-                    [next_id, username, review_book[0], form_score, function_score, comment],
+                insert_review(
+                    conn,
+                    review_book[0],
+                    username,
+                    form=form_score,
+                    function=function_score,
+                    comment=comment,
                 )
                 conn.close()
                 st.success("Review added!")
+    else:
+        st.info("Completed or abandoned books will show up here for review.")
 
     st.subheader("All Reviews")
     conn = get_connection()
@@ -259,11 +347,13 @@ with tab2:
     conn.close()
     st.dataframe(df_reviews, use_container_width=True)
 
-    # Books Read by Year Chart
+    # Books Read by Year Chart (completed only; abandoned books don't count as read)
     st.subheader("📊 Books Read by Year")
     conn = get_connection()
     df_done = conn.execute(
-        "SELECT title, end_date FROM books WHERE username = ? AND end_date IS NOT NULL", [username]
+        "SELECT title, end_date FROM books "
+        "WHERE username = ? AND status = 'completed' AND end_date IS NOT NULL",
+        [username],
     ).fetchdf()
     conn.close()
 
@@ -331,8 +421,10 @@ with tab3:
             st.caption("No books match that search.")
         else:
             st.caption("Click a row to edit it.")
+            table_view = filtered[["title", "author", "status", "format", "start_date", "end_date"]].copy()
+            table_view["status"] = table_view["status"].map(status_label)
             event = st.dataframe(
-                filtered[["title", "author", "format", "start_date", "end_date"]],
+                table_view,
                 hide_index=True,
                 use_container_width=True,
                 on_select="rerun",
@@ -348,6 +440,20 @@ with tab3:
                 st.divider()
                 st.subheader(f"{book_choice['title']} — {book_choice['author']}")
 
+                current_start = None if pd.isna(book_choice["start_date"]) else pd.to_datetime(book_choice["start_date"]).date()
+                current_end = None if pd.isna(book_choice["end_date"]) else pd.to_datetime(book_choice["end_date"]).date()
+
+                current_status = book_choice.get("status")
+                if current_status not in STATUSES:
+                    current_status = infer_status(current_start, current_end)
+                new_status = st.selectbox(
+                    "Status",
+                    STATUSES,
+                    index=STATUSES.index(current_status),
+                    format_func=status_label,
+                    key=f"status_{book_id}",
+                )
+
                 current_format = book_choice["format"] if book_choice["format"] in FORMATS else "NA"
                 new_format = st.selectbox(
                     "Format",
@@ -355,16 +461,8 @@ with tab3:
                     index=FORMATS.index(current_format),
                     key=f"fmt_{book_id}",
                 )
-                new_start = st.date_input(
-                    "Start Date",
-                    value=None if pd.isna(book_choice["start_date"]) else pd.to_datetime(book_choice["start_date"]).date(),
-                    key=f"start_{book_id}",
-                )
-                new_end = st.date_input(
-                    "End Date",
-                    value=None if pd.isna(book_choice["end_date"]) else pd.to_datetime(book_choice["end_date"]).date(),
-                    key=f"end_{book_id}",
-                )
+                new_start = st.date_input("Start Date", value=current_start, key=f"start_{book_id}")
+                new_end = st.date_input("End Date", value=current_end, key=f"end_{book_id}")
                 new_isbn = st.text_input(
                     "ISBN",
                     value="" if pd.isna(book_choice["isbn"]) else book_choice["isbn"],
@@ -374,15 +472,20 @@ with tab3:
                 save_col, delete_col, _ = st.columns([1, 1, 4])
 
                 if save_col.button("💾 Save Changes", key=f"save_{book_id}"):
-                    conn = get_connection()
-                    conn.execute(
-                        "UPDATE books SET format=?, start_date=?, end_date=?, isbn=? WHERE id=? AND username=?",
-                        [new_format, new_start, new_end, new_isbn, book_id, username],
-                    )
-                    conn.close()
-                    flash(f"Updated '{book_choice['title']}'")
-                    st.session_state["manage_gen"] += 1
-                    st.rerun()
+                    problem = date_error(new_status, new_start, new_end)
+                    if problem:
+                        st.error(problem)
+                    else:
+                        conn = get_connection()
+                        conn.execute(
+                            "UPDATE books SET status=?, format=?, start_date=?, end_date=?, isbn=? "
+                            "WHERE id=? AND username=?",
+                            [new_status, new_format, new_start, new_end, new_isbn, book_id, username],
+                        )
+                        conn.close()
+                        flash(f"Updated '{book_choice['title']}'")
+                        st.session_state["manage_gen"] += 1
+                        st.rerun()
 
                 if delete_col.button("🗑️ Delete Book", key=f"delete_{book_id}"):
                     conn = get_connection()
@@ -405,3 +508,29 @@ with tab3:
             flash("✅ All books and reviews have been deleted.")
             st.session_state["manage_gen"] += 1
             st.rerun()
+
+
+# =====================================================================
+# secrets.toml example
+# ---------------------------------------------------------------------
+# Local: .streamlit/secrets.toml  (make sure it's in .gitignore!)
+# Streamlit Cloud: App settings -> Secrets
+#
+# Generate a bcrypt hash for each password with:
+#   python -c "import bcrypt; print(bcrypt.hashpw(b'YOUR_PASSWORD', bcrypt.gensalt()).decode())"
+#
+# [cookie]
+# name = "bookz_cookie"
+# key = "paste-a-long-random-string-here"   # e.g. python -c "import secrets; print(secrets.token_hex(32))"
+# expiry_days = 30
+#
+# [credentials.usernames.alice]
+# name = "Alice Smith"
+# password = "$2b$12$...hash..."
+#
+# [credentials.usernames.roto]
+# name = "roto"
+# password = "$2b$12$...hash..."
+#
+# (keep your existing MotherDuck token wherever db.py already reads it from)
+# =====================================================================
